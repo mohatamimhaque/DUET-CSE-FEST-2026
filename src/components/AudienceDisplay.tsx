@@ -21,7 +21,7 @@ type StagePhase =
 
 export const AudienceDisplay: React.FC = () => {
   const { toggleTheme, isDark } = useTheme();
-  const { isConnected, lastMessage } = useWebSocket('audience');
+  const { isConnected, lastMessage, isSupabaseRealtime } = useWebSocket('audience');
 
   const [eventInfo, setEventInfo] = useState<PublicEventInfo | null>(null);
   const [drawState, setDrawState] = useState<PublicDrawState | null>(null);
@@ -58,12 +58,28 @@ export const AudienceDisplay: React.FC = () => {
   audioEnabledRef.current = audioEnabled;
 
   const pendingCandidateRef = useRef<any>(null);
+  const countTimerRef = useRef<NodeJS.Timeout | null>(null);
   const rollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const stageSequenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeAnimationLockRef = useRef<boolean>(false);
   const confettiCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const confettiInstanceRef = useRef<confetti.CreateTypes | null>(null);
   const handledMessageSigRef = useRef<string>('');
+
+  const clearAllStageTimers = useCallback(() => {
+    if (countTimerRef.current) {
+      clearInterval(countTimerRef.current);
+      countTimerRef.current = null;
+    }
+    if (rollingIntervalRef.current) {
+      clearInterval(rollingIntervalRef.current);
+      rollingIntervalRef.current = null;
+    }
+    if (stageSequenceTimeoutRef.current) {
+      clearTimeout(stageSequenceTimeoutRef.current);
+      stageSequenceTimeoutRef.current = null;
+    }
+  }, []);
 
   // Clean up confetti instance on unmount
   useEffect(() => {
@@ -152,11 +168,10 @@ export const AudienceDisplay: React.FC = () => {
 
   // Complete Theatrical Draw Start Animation Sequence (Stable reference via refs)
   const handleDrawStartSequence = useCallback((payload: any) => {
-    if (activeAnimationLockRef.current) return;
+    if (activeAnimationLockRef.current || stagePhaseRef.current !== 'IDLE') return;
     activeAnimationLockRef.current = true;
 
-    if (rollingIntervalRef.current) clearInterval(rollingIntervalRef.current);
-    if (stageSequenceTimeoutRef.current) clearTimeout(stageSequenceTimeoutRef.current);
+    clearAllStageTimers();
 
     setDisplayedCandidate(null);
     setIgnoredInfo(null);
@@ -176,65 +191,62 @@ export const AudienceDisplay: React.FC = () => {
     setCountdownNumber(cdSeconds);
     setShufflePasses(passes);
 
-    // PHASE 1: DUET CSE FEST 2026 STAGE INTRO (FIRST 1.0 SECOND)
-    setStagePhase('STAGE_INTRO');
+    // PHASE 1: HIGH-ENERGY COUNTDOWN STARTS IMMEDIATELY
+    setStagePhase('COUNTDOWN');
     if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-      soundEngine.playFestIntroSound();
+      soundEngine.playCountdownBeep(cdSeconds);
     }
 
-    // PHASE 2: COUNTDOWN STARTS AT 1.0s
-    stageSequenceTimeoutRef.current = setTimeout(() => {
-      setStagePhase('COUNTDOWN');
-      if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-        soundEngine.playCountdownBeep(cdSeconds);
-      }
-
-      let currentSec = cdSeconds;
-      const countTimer = setInterval(() => {
-        currentSec -= 1;
-        if (currentSec > 0) {
-          setCountdownNumber(currentSec);
-          if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-            soundEngine.playCountdownBeep(currentSec);
-          }
-        } else {
-          clearInterval(countTimer);
-
-          // PHASE 3: CYCLOTRON ROLLING SIMULATION
-          setStagePhase('ROLLING');
-          let rIdx = 0;
-          const fallbackRollingItem = candidate
-            ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'PARTICIPANT' }
-            : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
-          const activePool = realParticipantsRef.current.length > 0 ? realParticipantsRef.current : [fallbackRollingItem];
-          const poolLength = Math.max(1, activePool.length);
-          const rollTimer = setInterval(() => {
-            rIdx = (rIdx + 1) % poolLength;
-            setRollingIndex(rIdx);
-            if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-              soundEngine.playTickSound();
-            }
-          }, 60);
-          rollingIntervalRef.current = rollTimer;
-
-          // Roll for 2.2 seconds then reveal candidate selected by verified draw
-          setTimeout(() => {
-            clearInterval(rollTimer);
-            rollingIntervalRef.current = null;
-            activeAnimationLockRef.current = false;
-
-            // PHASE 4: CANDIDATE REVEAL
-            const revealedCandidate = pendingCandidateRef.current || candidate;
-            setDisplayedCandidate(revealedCandidate);
-            setStagePhase('CANDIDATE_REVEAL');
-            if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-              soundEngine.playCandidateSelectSound();
-            }
-          }, 2200);
+    let currentSec = cdSeconds;
+    countTimerRef.current = setInterval(() => {
+      currentSec -= 1;
+      if (currentSec > 0) {
+        setCountdownNumber(currentSec);
+        if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+          soundEngine.playCountdownBeep(currentSec);
         }
-      }, 1000);
+      } else {
+        if (countTimerRef.current) {
+          clearInterval(countTimerRef.current);
+          countTimerRef.current = null;
+        }
+
+        // PHASE 2: CYCLOTRON ROLLING SIMULATION
+        setStagePhase('ROLLING');
+        let rIdx = 0;
+        const fallbackRollingItem = candidate
+          ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'PARTICIPANT' }
+          : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
+        const activePool = realParticipantsRef.current.length > 0 ? realParticipantsRef.current : [fallbackRollingItem];
+        const poolLength = Math.max(1, activePool.length);
+        const rollTimer = setInterval(() => {
+          rIdx = (rIdx + 1) % poolLength;
+          setRollingIndex(rIdx);
+          if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+            soundEngine.playTickSound();
+          }
+        }, 60);
+        rollingIntervalRef.current = rollTimer;
+
+        // Roll for 2.2 seconds then reveal candidate selected by verified draw
+        stageSequenceTimeoutRef.current = setTimeout(() => {
+          if (rollingIntervalRef.current) {
+            clearInterval(rollingIntervalRef.current);
+            rollingIntervalRef.current = null;
+          }
+          activeAnimationLockRef.current = false;
+
+          // PHASE 3: CANDIDATE REVEAL
+          const revealedCandidate = pendingCandidateRef.current || candidate;
+          setDisplayedCandidate(revealedCandidate);
+          setStagePhase('CANDIDATE_REVEAL');
+          if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+            soundEngine.playCandidateSelectSound();
+          }
+        }, 2200);
+      }
     }, 1000);
-  }, []);
+  }, [clearAllStageTimers]);
 
   // Initial event config & real participant pool loading
   useEffect(() => {
@@ -373,8 +385,7 @@ export const AudienceDisplay: React.FC = () => {
         setStagePhase('CANDIDATE_REVEAL');
       }
     } else if (type === 'WINNER_CONFIRMED') {
-      if (rollingIntervalRef.current) clearInterval(rollingIntervalRef.current);
-      if (stageSequenceTimeoutRef.current) clearTimeout(stageSequenceTimeoutRef.current);
+      clearAllStageTimers();
       activeAnimationLockRef.current = false;
 
       setDisplayedWinner(payload.winner);
@@ -402,8 +413,7 @@ export const AudienceDisplay: React.FC = () => {
           : null
       );
     } else if (type === 'CANDIDATE_IGNORED') {
-      if (rollingIntervalRef.current) clearInterval(rollingIntervalRef.current);
-      if (stageSequenceTimeoutRef.current) clearTimeout(stageSequenceTimeoutRef.current);
+      clearAllStageTimers();
       activeAnimationLockRef.current = false;
 
       setIgnoredInfo({
@@ -439,8 +449,7 @@ export const AudienceDisplay: React.FC = () => {
     } else if (type === 'RESUMED') {
       setDrawState((prev) => (prev ? { ...prev, status: 'READY' } : null));
     } else if (type === 'RESET') {
-      if (rollingIntervalRef.current) clearInterval(rollingIntervalRef.current);
-      if (stageSequenceTimeoutRef.current) clearTimeout(stageSequenceTimeoutRef.current);
+      clearAllStageTimers();
       activeAnimationLockRef.current = false;
       setStagePhase('IDLE');
       setDisplayedCandidate(null);
@@ -448,7 +457,7 @@ export const AudienceDisplay: React.FC = () => {
       setIgnoredInfo(null);
       api.getPublicDrawState().then(setDrawState).catch(() => {});
     }
-  }, [lastMessage, handleDrawStartSequence, triggerGrandConfetti]);
+  }, [lastMessage, handleDrawStartSequence, triggerGrandConfetti, clearAllStageTimers]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -531,7 +540,7 @@ export const AudienceDisplay: React.FC = () => {
         <div className="pointer-events-auto inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-slate-700/60 shadow-lg text-xs font-mono">
           <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
           <span className="text-slate-300 font-semibold tracking-wider">
-            {isConnected ? 'LIVE SYNCED' : 'CONNECTING...'}
+            {isSupabaseRealtime ? 'SUPABASE REALTIME' : isConnected ? 'LIVE SYNCED' : 'CONNECTING...'}
           </span>
         </div>
 
@@ -950,6 +959,15 @@ export const AudienceDisplay: React.FC = () => {
         )}
 
       </main>
+
+      {/* Audience Page Credit Badge */}
+      <footer className="fixed bottom-3 right-4 z-40 select-none pointer-events-none">
+        <div className="text-[11px] sm:text-xs font-mono tracking-wider text-slate-400/90 bg-slate-900/80 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-slate-700/60 shadow-lg flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/80 shadow-[0_0_6px_#22d3ee]" />
+          <span>credit:</span>
+          <span className="text-cyan-300 font-semibold lowercase tracking-normal">mohatamim</span>
+        </div>
+      </footer>
     </div>
   );
 };

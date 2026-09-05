@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { subscribeToRealtimeRaffle } from '../services/supabaseClient.ts';
 
 export interface WebSocketMessage {
   id?: string;
@@ -9,6 +10,7 @@ export interface WebSocketMessage {
 
 export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isSupabaseRealtime, setIsSupabaseRealtime] = useState<boolean>(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -16,12 +18,15 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
   const seenIdsRef = useRef<Set<string>>(new Set());
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastPolledStateSigRef = useRef<string>('');
   const isDestroyedRef = useRef<boolean>(false);
   const reconnectAttemptsRef = useRef<number>(0);
+  const wsDisabledRef = useRef<boolean>(false);
 
   const handleIncomingMessage = useCallback((raw: string) => {
     try {
-      const data: WebSocketMessage = JSON.parse(raw);
+      const data: WebSocketMessage = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (!data || !data.type) return;
 
       // Filter out internal protocol heartbeats
@@ -51,8 +56,41 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
     }
   }, []);
 
+  const pollState = useCallback(async () => {
+    if (isDestroyedRef.current) return;
+    try {
+      const endpoint = role === 'controller' ? '/api/controller/state' : '/api/public/draw/state';
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('raffle_ctrl_token') : null;
+      const headers: Record<string, string> = {};
+      if (token && role === 'controller') {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch(endpoint, { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      setIsConnected(true);
+
+      // Create a deterministic signature based on draw-relevant state
+      const sig = `${data.status}_${data.next_serial}_${data.completed_winners}_${data.current_candidate?.id || ''}_${data.last_winner?.id || ''}_${data.is_locked ? 1 : 0}`;
+      if (sig !== lastPolledStateSigRef.current) {
+        lastPolledStateSigRef.current = sig;
+        const msgType = role === 'controller' ? 'STATE_UPDATED' : 'DRAW_STATE';
+        handleIncomingMessage(
+          JSON.stringify({
+            id: `poll_${role}_${sig}`,
+            type: msgType,
+            payload: data,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      }
+    } catch {
+      // Polling network glitch
+    }
+  }, [role, handleIncomingMessage]);
+
   const connectWs = useCallback(() => {
-    if (typeof window === 'undefined' || isDestroyedRef.current) return;
+    if (typeof window === 'undefined' || isDestroyedRef.current || wsDisabledRef.current) return;
 
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -88,14 +126,19 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         if (isDestroyedRef.current) return;
 
-        // Auto-reconnect with exponential backoff
-        const delay = Math.min(5000, 1000 * Math.pow(1.5, reconnectAttemptsRef.current));
-        reconnectAttemptsRef.current += 1;
-        
-        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connectWs();
-        }, delay);
+        // Auto-reconnect with exponential backoff (capped to prevent endless errors on serverless)
+        if (reconnectAttemptsRef.current < 2) {
+          const delay = Math.min(4000, 1000 * Math.pow(1.5, reconnectAttemptsRef.current));
+          reconnectAttemptsRef.current += 1;
+          
+          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectWs();
+          }, delay);
+        } else {
+          // Permanently disable WS for this session and rely on HTTP polling sync
+          wsDisabledRef.current = true;
+        }
 
         // If SSE is not open, show disconnected
         if (!eventSourceRef.current || eventSourceRef.current.readyState === EventSource.CLOSED) {
@@ -109,7 +152,8 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         } catch {}
       };
     } catch {
-      // WS error fallback to SSE
+      // WS error fallback to SSE & polling
+      wsDisabledRef.current = true;
     }
   }, [role, handleIncomingMessage]);
 
@@ -141,13 +185,37 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
 
   useEffect(() => {
     isDestroyedRef.current = false;
+
+    // 1. Primary: Supabase Managed Realtime WebSocket Channel
+    const unsubscribeSupabase = subscribeToRealtimeRaffle(
+      (msg: any) => {
+        handleIncomingMessage(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      },
+      (status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsConnected(true);
+          setIsSupabaseRealtime(true);
+        } else if (status === 'ERROR' || status === 'CLOSED') {
+          setIsSupabaseRealtime(false);
+        }
+      }
+    );
+
+    // 2. Secondary & Standalone fallback connections
     connectWs();
     connectSse();
 
+    // 3. Fallback heartbeat polling synchronization
+    pollState();
+    pollIntervalRef.current = setInterval(pollState, 1500);
+
     return () => {
       isDestroyedRef.current = true;
+      unsubscribeSupabase();
+
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
 
       if (wsRef.current) {
         try {
@@ -170,7 +238,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         } catch {}
       }
     };
-  }, [connectWs, connectSse]);
+  }, [connectWs, connectSse, pollState, handleIncomingMessage]);
 
-  return { isConnected, lastMessage };
+  return { isConnected, lastMessage, isSupabaseRealtime };
 }

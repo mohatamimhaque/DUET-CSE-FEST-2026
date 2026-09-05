@@ -19,6 +19,8 @@ export interface AppConfig {
   PORT: number;
 }
 
+export const AppConfig = {} as any;
+
 function parseBoolean(val: string | undefined, defaultValue: boolean): boolean {
   if (val === undefined || val.trim() === '') {
     return defaultValue;
@@ -58,9 +60,9 @@ export function loadAndValidateConfig(): AppConfig {
   const CONTROLLER_USERNAME = process.env.CONTROLLER_USERNAME?.trim() || 'admin';
   const CONTROLLER_PASSWORD = process.env.CONTROLLER_PASSWORD?.trim() || 'duetcsefest2026password';
   const SECRET_KEY = process.env.SECRET_KEY?.trim() || 'duet-cse-fest-raffle-secure-key-2026-very-strong';
-  const SUPABASE_URL = process.env.SUPABASE_URL?.trim() || '';
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
-  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY?.trim() || '';
+  const SUPABASE_URL = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || 'https://toyocrdimcvkmiidposk.supabase.co';
+  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRveW9jcmRpbWN2a21paWRwb3NrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODE3MzA0MCwiZXhwIjoyMDkzNzQ5MDQwfQ.SSV-Cfid5yjv4JqEJNxbMdXSC8U7k4xMGNnqRGuacmU';
+  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY?.trim() || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRveW9jcmRpbWN2a21paWRwb3NrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNzMwNDAsImV4cCI6MjA5Mzc0OTA0MH0.tcrMtLApEH13VotkJTsNqg2c0FbTwFhoUSIwzxfNF3U';
 
   console.log(`[Config] Loaded config for event: "${EVENT_NAME}" with ${TOTAL_WINNERS} total winners target.`);
 

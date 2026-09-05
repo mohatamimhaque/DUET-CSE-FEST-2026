@@ -1,10 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 let cachedClient: SupabaseClient | null = null;
+let realtimeChannel: any = null;
 
 export function getSupabaseConfig(): { url: string; key: string; isConfigured: boolean } {
-  const url = process.env.SUPABASE_URL?.trim() || '';
-  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || process.env.SUPABASE_ANON_KEY?.trim()) || '';
+  const url = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || 'https://toyocrdimcvkmiidposk.supabase.co';
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || process.env.SUPABASE_ANON_KEY?.trim() || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRveW9jcmRpbWN2a21paWRwb3NrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODE3MzA0MCwiZXhwIjoyMDkzNzQ5MDQwfQ.SSV-Cfid5yjv4JqEJNxbMdXSC8U7k4xMGNnqRGuacmU';
   const isConfigured = Boolean(url && key && url.startsWith('http'));
   return { url, key, isConfigured };
 }
@@ -81,5 +82,35 @@ export async function checkSupabaseHealth(): Promise<{
       participant_count: 0,
       message: `SUPABASE_CONNECT_EXCEPTION: ${err.message}`,
     };
+  }
+}
+
+/**
+ * Broadcast event across Supabase Realtime WebSocket channel
+ */
+export async function broadcastSupabaseEvent(type: string, payload: any): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    if (!realtimeChannel) {
+      realtimeChannel = client.channel('cse_fest_raffle_events');
+      realtimeChannel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Supabase Realtime] Server broadcast channel connected.');
+        }
+      });
+    }
+
+    const res = await realtimeChannel.send({
+      type: 'broadcast',
+      event: type,
+      payload,
+    });
+
+    return res === 'ok';
+  } catch (err: any) {
+    console.warn('[Supabase Realtime] Broadcast notice:', err.message);
+    return false;
   }
 }

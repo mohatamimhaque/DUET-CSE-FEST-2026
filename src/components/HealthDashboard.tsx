@@ -12,7 +12,7 @@ export const HealthDashboard: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [lastRefreshed, setLastRefreshed] = useState<string>('');
 
-  const { isConnected, lastMessage } = useWebSocket('audience');
+  const { isConnected, lastMessage, isSupabaseRealtime } = useWebSocket('audience');
 
   const fetchHealth = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
@@ -134,12 +134,17 @@ export const HealthDashboard: React.FC = () => {
         </div>
 
         <div className="glass-panel p-6 rounded-3xl border border-purple-500/30">
-          <div className="text-xs font-bold uppercase tracking-wider text-purple-300">Real-time Stream</div>
-          <div className="text-2xl md:text-3xl font-black font-display text-purple-300 mt-2">
-            {health?.metrics.active_ws_connections ?? 0} <span className="text-xs text-slate-300 font-normal">Active</span>
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-bold uppercase tracking-wider text-purple-300">Real-time Stream</div>
+            <span className={`w-2 h-2 rounded-full ${isSupabaseRealtime || isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+          </div>
+          <div className="text-xl md:text-2xl font-black font-display text-purple-300 mt-2">
+            {isSupabaseRealtime ? 'Supabase Realtime' : `${health?.metrics.active_ws_connections ?? 0} Active`}
           </div>
           <p className="text-xs text-slate-300 mt-1">
-            Audience: {health?.metrics.audience_connections ?? 0} • Controller: {health?.metrics.controller_connections ?? 0}
+            {isSupabaseRealtime
+              ? 'Managed Realtime WebSocket • Postgres CDC Synced'
+              : `Audience: ${health?.metrics.audience_connections ?? 0} • Controller: ${health?.metrics.controller_connections ?? 0}`}
           </p>
         </div>
       </div>

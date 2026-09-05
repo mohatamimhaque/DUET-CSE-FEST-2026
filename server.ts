@@ -1,15 +1,15 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import cookieParser from 'cookie-parser';
-import { createServer as createViteServer } from 'vite';
 import { loadAndValidateConfig } from './src/server/config.ts';
 import { RaffleService } from './src/server/raffleService.ts';
 import { wsManager } from './src/server/websocketManager.ts';
 import { supabaseRepository } from './src/server/supabaseRepository.ts';
-import { checkSupabaseHealth } from './src/server/supabase.ts';
+import { checkSupabaseHealth, getSupabaseConfig } from './src/server/supabase.ts';
 import {
   findRootExcelFile,
   parseExcelBuffer,
@@ -33,8 +33,27 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Initialize WebSocket Manager on the HTTP server
-wsManager.initialize(server);
+// Path compatibility for serverless environments (if /api prefix was stripped)
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  if (req.url && (req.url.startsWith('/public/') || req.url.startsWith('/controller/action/'))) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
+// Check if server.ts is being run directly as standalone process
+const isDirectExecution = Boolean(
+  process.argv[1] && (
+    process.argv[1].endsWith('server.ts') ||
+    process.argv[1].endsWith('server.cjs') ||
+    process.argv[1].endsWith('server.js')
+  )
+);
+
+// Initialize WebSocket Manager on the HTTP server (only for non-serverless standalone servers)
+if (isDirectExecution && !process.env.VERCEL && !process.env.NOW_REGION && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  wsManager.initialize(server);
+}
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser(config.SECRET_KEY));
@@ -48,6 +67,14 @@ app.get('/favicon.ico', (_req: Request, res: Response) => {
 });
 app.get('/favicon.svg', (_req: Request, res: Response) => {
   res.type('image/svg+xml').sendFile(path.join(process.cwd(), 'public', 'favicon.svg'));
+});
+
+// Serverless fallback response for WebSocket upgrade endpoint
+app.all(['/ws', '/ws/*'], (_req: Request, res: Response) => {
+  res.status(501).json({
+    status: 'ws_unavailable_serverless',
+    message: 'WebSocket direct TCP upgrades are not available in serverless functions. Real-time synchronization is handled automatically via HTTP polling and SSE.',
+  });
 });
 
 // Helper: Generate secure session token
@@ -106,6 +133,7 @@ function requireControllerAuth(req: Request, res: Response, next: NextFunction) 
 // ==========================================
 
 app.get('/api/public/event', (_req: Request, res: Response) => {
+  const supa = getSupabaseConfig();
   res.json({
     event_name: config.EVENT_NAME,
     total_winners: config.TOTAL_WINNERS,
@@ -115,6 +143,11 @@ app.get('/api/public/event', (_req: Request, res: Response) => {
     shuffle_passes: config.SHUFFLE_PASSES,
     beep_enabled: config.BEEP_ENABLED,
     confetti_enabled: config.CONFETTI_ENABLED,
+    supabase: {
+      url: supa.url,
+      anon_key: process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+      is_configured: supa.isConfigured,
+    },
   });
 });
 
@@ -691,17 +724,29 @@ app.get('/api/controller/export/visitor-analytics.csv', requireControllerAuth, (
   sendCsv(res, `DUET_CSE_Fest_2026_Visitor_Analytics_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
 });
 
+// Global Error Handler for API routes
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[API Error Handler]:', err);
+  if (!res.headersSent) {
+    res.status(err.status || 500).json({
+      success: false,
+      error: err.message || 'Internal Server Error',
+    });
+  }
+});
+
 // ==========================================
 // 5. VITE / STATIC SERVING
 // ==========================================
 
 async function setupViteOrStatic() {
-  // If running on Vercel serverless, do not mount dev server or bind port
-  if (process.env.VERCEL) {
+  // If running on Vercel or any serverless runtime, do not mount dev server or bind port
+  if (process.env.VERCEL || process.env.VERCEL_ENV || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     return;
   }
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -728,7 +773,9 @@ async function setupViteOrStatic() {
   });
 }
 
-setupViteOrStatic();
+if (isDirectExecution && !process.env.VERCEL && !process.env.NOW_REGION && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  setupViteOrStatic();
+}
 
 export { app, server };
 export default app;

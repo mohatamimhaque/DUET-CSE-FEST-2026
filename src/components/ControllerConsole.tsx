@@ -12,7 +12,7 @@ type ControllerStagePhase = 'IDLE' | 'STAGE_INTRO' | 'COUNTDOWN' | 'ROLLING' | '
 
 export const ControllerConsole: React.FC = () => {
   const { theme, toggleTheme, isDark } = useTheme();
-  const { isConnected, lastMessage } = useWebSocket('controller');
+  const { isConnected, lastMessage, isSupabaseRealtime } = useWebSocket('controller');
 
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -285,124 +285,120 @@ export const ControllerConsole: React.FC = () => {
       clearInterval(rollingIntervalRef.current);
       rollingIntervalRef.current = null;
     }
-    activeAnimationLockRef.current = false;
   }, []);
 
   useEffect(() => {
     return () => {
+      activeAnimationLockRef.current = false;
       clearStageTimers();
     };
   }, [clearStageTimers]);
 
+  const participantsListRef = useRef(participantsList);
+  participantsListRef.current = participantsList;
+
+  const fetchStateRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const startStageCountdownRef = useRef<(payload: any) => void>(() => {});
+
   const startStageCountdown = useCallback(
     (payload: any) => {
-      if (activeAnimationLockRef.current) return;
+      // Guard against duplicate start / mid-sequence restart from websocket or polling
+      if (activeAnimationLockRef.current || stagePhaseRef.current !== 'IDLE') return;
       activeAnimationLockRef.current = true;
       clearStageTimers();
 
-      const candidate = payload.candidate;
+      const candidate = payload?.candidate;
       pendingCandidateRef.current = candidate;
-      const serial = payload.serial || stateRef.current?.next_serial || 1;
-      const cdSeconds = payload.countdown_seconds ?? 5;
+      const serial = payload?.serial || stateRef.current?.next_serial || 1;
+      const cdSeconds = payload?.countdown_seconds ?? 5;
 
       setStageSerial(serial);
       setCountdownTotal(cdSeconds);
       setCountdownNumber(cdSeconds);
 
-      // PHASE 1: DUET CSE FEST 2026 STAGE INTRO (1.0 SECOND)
-      setStagePhase('STAGE_INTRO');
+      // Immediately show countdown timer (time) with beep sound
+      setStagePhase('COUNTDOWN');
       if (soundEnabledRef.current) {
         try {
-          soundEngine.playFestIntroSound();
+          soundEngine.playCountdownBeep(cdSeconds);
         } catch {
-          // Audio autoplay fallback
+          // Audio fallback
         }
       }
 
-      // PHASE 2: COUNTDOWN STARTS AT 1.0s
-      stageSequenceTimeoutRef.current = setTimeout(() => {
-        setStagePhase('COUNTDOWN');
-        if (soundEnabledRef.current) {
-          try {
-            soundEngine.playCountdownBeep(cdSeconds);
-          } catch {
-            // Audio fallback
+      let currentSec = cdSeconds;
+      countTimerRef.current = setInterval(() => {
+        currentSec -= 1;
+        if (currentSec > 0) {
+          setCountdownNumber(currentSec);
+          if (soundEnabledRef.current) {
+            try {
+              soundEngine.playCountdownBeep(currentSec);
+            } catch {
+              // Audio fallback
+            }
           }
-        }
+        } else {
+          if (countTimerRef.current) {
+            clearInterval(countTimerRef.current);
+            countTimerRef.current = null;
+          }
 
-        let currentSec = cdSeconds;
-        countTimerRef.current = setInterval(() => {
-          currentSec -= 1;
-          if (currentSec > 0) {
-            setCountdownNumber(currentSec);
+          // PHASE: CYCLOTRON ROLLING SIMULATION
+          setStagePhase('ROLLING');
+          let rIdx = 0;
+          const fallbackRollingItem = candidate
+            ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'STUDENT' }
+            : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
+          const activePool = participantsListRef.current.length > 0 ? participantsListRef.current : [fallbackRollingItem];
+          const poolLength = Math.max(1, activePool.length);
+
+          rollingIntervalRef.current = setInterval(() => {
+            rIdx = (rIdx + 1) % poolLength;
+            setRollingIndex(rIdx);
             if (soundEnabledRef.current) {
               try {
-                soundEngine.playCountdownBeep(currentSec);
+                soundEngine.playTickSound();
               } catch {
                 // Audio fallback
               }
             }
-          } else {
-            if (countTimerRef.current) {
-              clearInterval(countTimerRef.current);
-              countTimerRef.current = null;
+          }, 60);
+
+          // Roll for 2.2 seconds then reveal candidate
+          stageSequenceTimeoutRef.current = setTimeout(() => {
+            if (rollingIntervalRef.current) {
+              clearInterval(rollingIntervalRef.current);
+              rollingIntervalRef.current = null;
             }
+            activeAnimationLockRef.current = false;
 
-            // PHASE 3: CYCLOTRON ROLLING SIMULATION
-            setStagePhase('ROLLING');
-            let rIdx = 0;
-            const fallbackRollingItem = candidate
-              ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'STUDENT' }
-              : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
-            const activePool = participantsList.length > 0 ? participantsList : [fallbackRollingItem];
-            const poolLength = Math.max(1, activePool.length);
-
-            rollingIntervalRef.current = setInterval(() => {
-              rIdx = (rIdx + 1) % poolLength;
-              setRollingIndex(rIdx);
-              if (soundEnabledRef.current) {
-                try {
-                  soundEngine.playTickSound();
-                } catch {
-                  // Audio fallback
-                }
+            // CANDIDATE REVEAL
+            const finalCandidate = pendingCandidateRef.current || candidate;
+            setRevealedCandidate(finalCandidate);
+            setStagePhase('CANDIDATE_REVEAL');
+            if (soundEnabledRef.current) {
+              try {
+                soundEngine.playCandidateSelectSound();
+              } catch {
+                // Audio fallback
               }
-            }, 60);
-
-            // Roll for 2.2 seconds then reveal candidate
-            stageSequenceTimeoutRef.current = setTimeout(() => {
-              if (rollingIntervalRef.current) {
-                clearInterval(rollingIntervalRef.current);
-                rollingIntervalRef.current = null;
-              }
-              activeAnimationLockRef.current = false;
-
-              // PHASE 4: CANDIDATE REVEAL
-              const finalCandidate = pendingCandidateRef.current || candidate;
-              setRevealedCandidate(finalCandidate);
-              setStagePhase('CANDIDATE_REVEAL');
-              if (soundEnabledRef.current) {
-                try {
-                  soundEngine.playCandidateSelectSound();
-                } catch {
-                  // Audio fallback
-                }
-              }
-              fetchState();
-            }, 2200);
-          }
-        }, 1000);
+            }
+            fetchStateRef.current();
+          }, 2200);
+        }
       }, 1000);
     },
-    [clearStageTimers, participantsList]
+    [clearStageTimers]
   );
+  startStageCountdownRef.current = startStageCountdown;
 
   const fetchState = useCallback(async () => {
     try {
       const data = await api.getControllerState();
       setState(data);
-      if (data.status === 'DRAWING' && stagePhaseRef.current === 'IDLE') {
-        startStageCountdown({
+      if (data.status === 'DRAWING' && stagePhaseRef.current === 'IDLE' && !activeAnimationLockRef.current) {
+        startStageCountdownRef.current({
           serial: data.next_serial,
           countdown_seconds: 5,
           candidate: data.current_candidate,
@@ -413,7 +409,8 @@ export const ControllerConsole: React.FC = () => {
         setIsAuthenticated(false);
       }
     }
-  }, [startStageCountdown]);
+  }, []);
+  fetchStateRef.current = fetchState;
 
   const fetchParticipants = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -462,11 +459,13 @@ export const ControllerConsole: React.FC = () => {
     handledControllerMsgSigRef.current = sig;
 
     if (lastMessage.type === 'DRAW_START') {
-      startStageCountdown(lastMessage.payload);
+      if (!activeAnimationLockRef.current && stagePhaseRef.current === 'IDLE') {
+        startStageCountdownRef.current(lastMessage.payload);
+      }
     } else if (lastMessage.type === 'STATE_UPDATED') {
       setState(lastMessage.payload);
-      if (lastMessage.payload?.status === 'DRAWING' && stagePhaseRef.current === 'IDLE') {
-        startStageCountdown({
+      if (lastMessage.payload?.status === 'DRAWING' && stagePhaseRef.current === 'IDLE' && !activeAnimationLockRef.current) {
+        startStageCountdownRef.current({
           serial: lastMessage.payload.next_serial,
           countdown_seconds: 5,
           candidate: lastMessage.payload.current_candidate,
@@ -477,7 +476,8 @@ export const ControllerConsole: React.FC = () => {
     } else if (
       lastMessage.type === 'WINNER_CONFIRMED' ||
       lastMessage.type === 'CANDIDATE_IGNORED' ||
-      lastMessage.type === 'SESSION_RESET'
+      lastMessage.type === 'SESSION_RESET' ||
+      lastMessage.type === 'RESET'
     ) {
       clearStageTimers();
       setStagePhase('IDLE');
@@ -820,8 +820,14 @@ export const ControllerConsole: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl md:text-2xl font-black font-display text-white">Event Controller Console</h1>
-            <p className="text-xs text-slate-400">
-              DUET CSE Fest 2026 • WebSocket: {isConnected ? 'Synchronized' : 'Disconnected'}
+            <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+              <span>DUET CSE Fest 2026 •</span>
+              <span className={`inline-flex items-center gap-1 font-mono text-[11px] ${
+                isSupabaseRealtime ? 'text-emerald-400' : isConnected ? 'text-cyan-400' : 'text-amber-400'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                {isSupabaseRealtime ? 'Supabase Realtime WebSocket' : isConnected ? 'Synchronized' : 'Reconnecting...'}
+              </span>
             </p>
           </div>
         </div>
@@ -1008,11 +1014,11 @@ export const ControllerConsole: React.FC = () => {
       </div>
 
       {/* Main Draw Action & Decision Console */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Primary Draw Actions */}
-        <div className="lg:col-span-7 glass-panel p-6 md:p-8 rounded-3xl flex flex-col justify-between space-y-6">
-          <div>
-            <div className="flex items-center justify-between mb-4">
+        <div className="lg:col-span-7 glass-panel p-6 md:p-7 rounded-3xl flex flex-col space-y-5 self-start">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold font-display text-white flex items-center gap-2">
                 <MaterialIcon name="play_circle" className="text-pink-400" />
                 Live Draw Operations
@@ -1189,33 +1195,49 @@ export const ControllerConsole: React.FC = () => {
                 const activeCandidate = revealedCandidate || state?.current_candidate;
                 if (!activeCandidate) return null;
                 return (
-                  <div className="glass-capsule p-6 md:p-8 rounded-2xl border border-pink-500/40 text-center relative overflow-hidden animate-in fade-in zoom-in-95 duration-300">
-                    <div className="text-xs font-bold uppercase tracking-widest text-pink-400 mb-2">
-                      SELECTED CANDIDATE • WINNER #{state?.next_serial ?? stageSerial}
+                  <div className="glass-capsule p-6 md:p-7 rounded-2xl border-2 border-pink-500/50 text-center relative overflow-hidden animate-in fade-in zoom-in-95 duration-300 shadow-[0_0_35px_rgba(236,72,153,0.2)]">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                      <span className="text-xs font-extrabold uppercase tracking-widest text-pink-400 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-pink-400 animate-pulse" />
+                        SELECTED CANDIDATE • WINNER #{state?.next_serial ?? stageSerial}
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                        {activeCandidate.type}
+                      </span>
                     </div>
 
-                    <div className="inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-400/30 mb-2">
-                      {activeCandidate.type}
+                    <div className="py-2">
+                      <h3 className="text-2xl md:text-4xl font-extrabold text-white font-display tracking-tight">
+                        {activeCandidate.name}
+                      </h3>
+
+                      <p className="text-base md:text-lg font-mono text-cyan-300 font-semibold mt-1.5">
+                        {activeCandidate.id
+                          ? `Roll: ${activeCandidate.id}`
+                          : activeCandidate.designation || 'DUET CSE'}
+                      </p>
                     </div>
 
-                    <h3 className="text-2xl md:text-4xl font-extrabold text-white font-display">
-                      {activeCandidate.name}
-                    </h3>
+                    {/* Cryptographic Selection & Stage Sync Info Bar */}
+                    <div className="mt-3 py-2 px-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs font-mono text-slate-300 flex flex-wrap items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-emerald-300">
+                        <MaterialIcon name="verified" size={15} className="text-emerald-400" />
+                        Zero-Modulo Bias Selected
+                      </span>
+                      <span className="text-[11px] text-cyan-400 font-sans font-medium flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                        Awaiting Controller Confirmation
+                      </span>
+                    </div>
 
-                    <p className="text-base font-mono text-cyan-300 mt-1">
-                      {activeCandidate.id
-                        ? `Roll: ${activeCandidate.id}`
-                        : activeCandidate.designation || 'DUET CSE'}
-                    </p>
-
-                    {/* Controller Authority Decision Buttons with Animations */}
-                    <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+                    {/* Controller Authority Decision Buttons */}
+                    <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
                       <button
                         id="controller-confirm-winner-btn"
                         type="button"
                         onClick={handleConfirmWinner}
                         disabled={actionLoading}
-                        className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-black text-sm tracking-wide bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.4)] transition hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                        className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl font-black text-sm tracking-wide bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.4)] transition hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2"
                       >
                         <MaterialIcon name="check_circle" size={20} />
                         PRESENT / CONFIRM WINNER #{state?.next_serial ?? stageSerial}
@@ -1226,7 +1248,7 @@ export const ControllerConsole: React.FC = () => {
                         type="button"
                         onClick={() => setShowIgnoreModal(true)}
                         disabled={actionLoading}
-                        className="w-full sm:w-auto px-5 py-3.5 rounded-xl font-bold text-sm tracking-wide bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 transition hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                        className="w-full sm:w-auto px-5 py-3.5 rounded-xl font-bold text-sm tracking-wide bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 transition hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2"
                       >
                         <MaterialIcon name="person_off" size={20} />
                         IGNORE / ABSENT
@@ -1236,11 +1258,11 @@ export const ControllerConsole: React.FC = () => {
                 );
               })()
             ) : (
-              <div className="border border-dashed border-slate-700 rounded-2xl p-8 text-center flex flex-col items-center justify-center">
-                <MaterialIcon name="casino" size={48} className="text-slate-600 mb-3" />
-                <h4 className="text-base font-bold text-slate-300">No Candidate Currently Selected</h4>
+              <div className="border border-dashed border-slate-700/80 rounded-2xl p-7 text-center flex flex-col items-center justify-center bg-slate-950/20">
+                <MaterialIcon name="casino" size={40} className="text-slate-600 mb-2" />
+                <h4 className="text-base font-bold text-slate-300">Ready for Next Winner Draw</h4>
                 <p className="text-xs text-slate-400 max-w-sm mt-1">
-                  Click the <strong>START DRAW</strong> button below to initiate countdown on the audience projector and trigger cryptographically secure selection.
+                  Click <strong>START DRAW</strong> below to start synchronized stage countdown and select Prize #{state?.next_serial ?? 1}.
                 </p>
               </div>
             )}
@@ -1248,30 +1270,38 @@ export const ControllerConsole: React.FC = () => {
 
           {/* Action Button Strip */}
           <div className="flex flex-wrap items-center gap-3 pt-4 border-t border-slate-800">
-            <button
-              id="controller-start-draw-btn"
-              type="button"
-              onClick={handleStartDraw}
-              disabled={
-                actionLoading ||
-                state?.status === 'COMPLETED' ||
-                state?.status === 'DRAWING' ||
-                stagePhase === 'STAGE_INTRO' ||
-                stagePhase === 'COUNTDOWN' ||
-                stagePhase === 'ROLLING' ||
-                state?.status === 'WAITING_CONFIRMATION' ||
-                state?.status === 'PAUSED' ||
-                state?.status === 'INTERRUPTED'
-              }
-              className="flex-1 min-w-[180px] py-4 rounded-2xl font-black text-sm md:text-base tracking-wider uppercase bg-gradient-to-r from-purple-600 via-pink-600 to-rose-500 hover:from-purple-500 hover:to-rose-400 text-white shadow-[0_0_30px_rgba(236,72,153,0.4)] disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
-            >
-              <MaterialIcon name="casino" size={22} />
-              {state?.status === 'DRAWING' || stagePhase === 'COUNTDOWN' || stagePhase === 'ROLLING' || stagePhase === 'STAGE_INTRO'
-                ? 'STAGE COUNTDOWN IN PROGRESS...'
-                : state?.status === 'COMPLETED'
-                ? 'ALL WINNERS DRAWN'
-                : `START DRAW FOR WINNER #${state?.next_serial ?? 1}`}
-            </button>
+            {state?.status === 'WAITING_CONFIRMATION' || revealedCandidate || state?.current_candidate ? (
+              <div className="flex-1 min-w-[200px] py-3.5 px-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono font-medium flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                <span>
+                  Winner #{state?.next_serial ?? stageSerial} selected. Confirm presence or skip using the action buttons above.
+                </span>
+              </div>
+            ) : (
+              <button
+                id="controller-start-draw-btn"
+                type="button"
+                onClick={handleStartDraw}
+                disabled={
+                  actionLoading ||
+                  state?.status === 'COMPLETED' ||
+                  state?.status === 'DRAWING' ||
+                  stagePhase === 'STAGE_INTRO' ||
+                  stagePhase === 'COUNTDOWN' ||
+                  stagePhase === 'ROLLING' ||
+                  state?.status === 'PAUSED' ||
+                  state?.status === 'INTERRUPTED'
+                }
+                className="flex-1 min-w-[180px] py-4 rounded-2xl font-black text-sm md:text-base tracking-wider uppercase bg-gradient-to-r from-purple-600 via-pink-600 to-rose-500 hover:from-purple-500 hover:to-rose-400 text-white shadow-[0_0_30px_rgba(236,72,153,0.4)] disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+              >
+                <MaterialIcon name="casino" size={22} />
+                {state?.status === 'DRAWING' || stagePhase === 'COUNTDOWN' || stagePhase === 'ROLLING' || stagePhase === 'STAGE_INTRO'
+                  ? 'STAGE COUNTDOWN IN PROGRESS...'
+                  : state?.status === 'COMPLETED'
+                  ? 'ALL WINNERS DRAWN'
+                  : `START DRAW FOR WINNER #${state?.next_serial ?? 1}`}
+              </button>
+            )}
 
             <button
               id="controller-pause-toggle-btn"

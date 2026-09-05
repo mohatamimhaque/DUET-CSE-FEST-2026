@@ -7,7 +7,7 @@ import { api, getStoredToken, setStoredToken } from '../services/api.ts';
 
 export const RemoteController: React.FC = () => {
   const { toggleTheme, isDark } = useTheme();
-  const { isConnected, lastMessage } = useWebSocket('controller');
+  const { isConnected, lastMessage, isSupabaseRealtime } = useWebSocket('controller');
 
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => !!getStoredToken());
@@ -35,6 +35,9 @@ export const RemoteController: React.FC = () => {
   const [remoteCountdown, setRemoteCountdown] = useState<number>(5);
   const [remoteCountdownTotal, setRemoteCountdownTotal] = useState<number>(5);
   const [remoteStagePhase, setRemoteStagePhase] = useState<'IDLE' | 'COUNTDOWN' | 'ROLLING'>('IDLE');
+  const remoteStagePhaseRef = useRef<'IDLE' | 'COUNTDOWN' | 'ROLLING'>('IDLE');
+  remoteStagePhaseRef.current = remoteStagePhase;
+  const isCountingDownRef = useRef<boolean>(false);
   const remoteCountIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Haptic feedback helper
@@ -48,6 +51,7 @@ export const RemoteController: React.FC = () => {
   }, [hapticsEnabled]);
 
   const clearRemoteTimers = useCallback(() => {
+    isCountingDownRef.current = false;
     if (remoteCountIntervalRef.current) {
       clearInterval(remoteCountIntervalRef.current);
       remoteCountIntervalRef.current = null;
@@ -55,10 +59,14 @@ export const RemoteController: React.FC = () => {
   }, []);
 
   const startRemoteCountdown = useCallback((seconds = 5) => {
+    // Guard: never restart if countdown is already actively in flight
+    if (isCountingDownRef.current || remoteStagePhaseRef.current !== 'IDLE') return;
+    isCountingDownRef.current = true;
     clearRemoteTimers();
     setRemoteCountdown(seconds);
     setRemoteCountdownTotal(seconds);
     setRemoteStagePhase('COUNTDOWN');
+    remoteStagePhaseRef.current = 'COUNTDOWN';
 
     let currentSec = seconds;
     remoteCountIntervalRef.current = setInterval(() => {
@@ -68,7 +76,9 @@ export const RemoteController: React.FC = () => {
         triggerHaptic(50);
       } else {
         clearRemoteTimers();
+        isCountingDownRef.current = false;
         setRemoteStagePhase('ROLLING');
+        remoteStagePhaseRef.current = 'ROLLING';
         triggerHaptic([60, 40, 60]);
       }
     }, 1000);
@@ -167,21 +177,30 @@ export const RemoteController: React.FC = () => {
       if (lastMessage.payload?.status === 'WAITING_CONFIRMATION') {
         triggerHaptic([100, 50, 100]);
         setRemoteStagePhase('IDLE');
+        remoteStagePhaseRef.current = 'IDLE';
         clearRemoteTimers();
-      } else if (lastMessage.payload?.status === 'DRAWING' && remoteStagePhase === 'IDLE') {
+      } else if (
+        lastMessage.payload?.status === 'DRAWING' &&
+        !isCountingDownRef.current &&
+        remoteStagePhaseRef.current === 'IDLE'
+      ) {
         startRemoteCountdown(5);
-      } else if (lastMessage.payload?.status !== 'DRAWING' && remoteStagePhase !== 'IDLE') {
+      } else if (lastMessage.payload?.status !== 'DRAWING' && remoteStagePhaseRef.current !== 'IDLE') {
         setRemoteStagePhase('IDLE');
+        remoteStagePhaseRef.current = 'IDLE';
         clearRemoteTimers();
       }
     } else if (lastMessage.type === 'DRAW_START') {
       triggerHaptic(80);
-      startRemoteCountdown(lastMessage.payload?.countdown_seconds || 5);
+      if (!isCountingDownRef.current && remoteStagePhaseRef.current === 'IDLE') {
+        startRemoteCountdown(lastMessage.payload?.countdown_seconds || 5);
+      }
       fetchState();
     } else if (lastMessage.type === 'WINNER_CONFIRMED') {
       triggerHaptic([150, 80, 200]);
       showToast(`Winner #${lastMessage.payload?.winner?.serial} confirmed!`);
       setRemoteStagePhase('IDLE');
+      remoteStagePhaseRef.current = 'IDLE';
       clearRemoteTimers();
       fetchState();
       fetchWinners();
@@ -189,15 +208,17 @@ export const RemoteController: React.FC = () => {
       triggerHaptic([80, 50, 80]);
       showToast(`Candidate skipped (${lastMessage.payload?.reason || 'absent'})`);
       setRemoteStagePhase('IDLE');
+      remoteStagePhaseRef.current = 'IDLE';
       clearRemoteTimers();
       fetchState();
     } else if (lastMessage.type === 'RESET' || lastMessage.type === 'SESSION_RESET') {
       setRemoteStagePhase('IDLE');
+      remoteStagePhaseRef.current = 'IDLE';
       clearRemoteTimers();
       fetchState();
       fetchWinners();
     }
-  }, [lastMessage, fetchState, fetchWinners, triggerHaptic, showToast, remoteStagePhase, startRemoteCountdown, clearRemoteTimers]);
+  }, [lastMessage, fetchState, fetchWinners, triggerHaptic, showToast, startRemoteCountdown, clearRemoteTimers]);
 
   // 2-second background state sync
   useEffect(() => {
@@ -436,7 +457,9 @@ export const RemoteController: React.FC = () => {
             </div>
             <div className="flex items-center gap-1.5 text-xs">
               <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-              <span className="text-[11px] text-slate-400">{isConnected ? 'Live Synchronized' : 'Reconnecting...'}</span>
+              <span className="text-[11px] text-slate-400 font-medium">
+                {isSupabaseRealtime ? 'Supabase Realtime' : isConnected ? 'Live Synchronized' : 'Reconnecting...'}
+              </span>
             </div>
           </div>
         </div>

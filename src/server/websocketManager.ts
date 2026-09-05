@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server } from 'http';
 import type { Response } from 'express';
+import { broadcastSupabaseEvent } from './supabase.ts';
 
 export interface WsClient {
   ws: WebSocket;
@@ -115,7 +116,8 @@ export class WebSocketManager {
 
   public broadcastAudience(type: string, payload: any) {
     const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const message = JSON.stringify({ id, type, payload, timestamp: new Date().toISOString() });
+    const packet = { id, type, payload, timestamp: new Date().toISOString() };
+    const message = JSON.stringify(packet);
     
     // 1. WebSocket broadcast
     this.clients.forEach((client) => {
@@ -132,11 +134,15 @@ export class WebSocketManager {
         this.sseClients.delete(client);
       }
     });
+
+    // 3. Supabase Realtime WebSocket broadcast
+    broadcastSupabaseEvent(type, packet).catch(() => {});
   }
 
   public broadcastController(type: string, payload: any) {
     const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const message = JSON.stringify({ id, type, payload, timestamp: new Date().toISOString() });
+    const packet = { id, type, payload, timestamp: new Date().toISOString() };
+    const message = JSON.stringify(packet);
     
     // 1. WebSocket broadcast
     this.clients.forEach((client) => {
@@ -155,6 +161,9 @@ export class WebSocketManager {
         }
       }
     });
+
+    // 3. Supabase Realtime WebSocket broadcast
+    broadcastSupabaseEvent(type, packet).catch(() => {});
   }
 
   public broadcastAll(type: string, payload: any) {

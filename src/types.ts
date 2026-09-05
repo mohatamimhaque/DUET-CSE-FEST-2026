@@ -174,3 +174,20 @@ export interface HealthStatus {
     heap_used_mb: number;
   };
 }
+
+// Runtime compatibility placeholders for Node.js type stripping ESM loader
+export const Participant = {} as any;
+export const WinnerResult = {} as any;
+export const IgnoredCandidate = {} as any;
+export const SessionState = {} as any;
+export const PageAccessSettings = {} as any;
+export const RegistrationRequest = {} as any;
+export const VisitorAnalytics = {} as any;
+export const AuditRecord = {} as any;
+export const PublicEventInfo = {} as any;
+export const PublicDrawState = {} as any;
+export const ControllerState = {} as any;
+export const HealthStatus = {} as any;
+export const WorkspaceModule = {} as any;
+export const ParticipantType = {} as any;
+export const RaffleStatus = {} as any;

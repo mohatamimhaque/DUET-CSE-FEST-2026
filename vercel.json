@@ -7,6 +7,10 @@
       "destination": "/api/index.ts"
     },
     {
+      "source": "/ws/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
       "source": "/banner.jpg",
       "destination": "/banner.jpg"
     },
