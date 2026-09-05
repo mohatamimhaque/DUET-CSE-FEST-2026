@@ -143,12 +143,16 @@ async function broadcastSupabaseEvent(type, payload) {
   const client = getSupabaseClient();
   if (!client) return false;
   try {
-    if (!realtimeChannel) {
+    if (!realtimeChannel || realtimeChannel.state !== "joined") {
       realtimeChannel = client.channel("cse_fest_raffle_events");
-      realtimeChannel.subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          console.log("[Supabase Realtime] Server broadcast channel connected.");
-        }
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 2e3);
+        realtimeChannel.subscribe((status) => {
+          if (status === "SUBSCRIBED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
       });
     }
     const res = await realtimeChannel.send({
@@ -961,9 +965,10 @@ var WebSocketManager = class {
         const host = request.headers.host || "localhost:3000";
         const rawPath = request.url ? new URL(request.url, `http://${host}`).pathname : "";
         const pathname = rawPath.replace(/\/+$/, "") || "/";
-        if (pathname === "/ws" || pathname === "/ws/audience" || pathname === "/ws/controller") {
+        const isWs = pathname === "/ws" || pathname === "/api/ws" || pathname.startsWith("/ws/") || pathname.startsWith("/api/ws/");
+        if (isWs) {
           this.wss?.handleUpgrade(request, socket, head, (ws) => {
-            const role = pathname === "/ws/controller" ? "controller" : "audience";
+            const role = pathname.includes("controller") ? "controller" : "audience";
             this.wss?.emit("connection", ws, request, role);
           });
         }
@@ -971,8 +976,21 @@ var WebSocketManager = class {
       }
     });
     this.wss.on("connection", (ws, _request, role = "audience") => {
+      try {
+        ws._socket?.setNoDelay(true);
+      } catch {
+      }
       const client = { ws, role, isAlive: true };
       this.clients.add(client);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "CONNECTED",
+            payload: { role },
+            timestamp: (/* @__PURE__ */ new Date()).toISOString()
+          })
+        );
+      }
       ws.on("pong", () => {
         client.isAlive = true;
       });
@@ -1012,7 +1030,7 @@ var WebSocketManager = class {
           this.sseClients.delete(client);
         }
       });
-    }, 15e3);
+    }, 1e4);
   }
   registerSseClient(res, role) {
     res.setHeader("Content-Type", "text/event-stream");
@@ -1030,33 +1048,43 @@ var WebSocketManager = class {
     });
   }
   broadcastAudience(type, payload) {
-    const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const packet = { id, type, payload, timestamp: (/* @__PURE__ */ new Date()).toISOString() };
+    const now = Date.now();
+    const id = `msg_aud_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const packet = { id, type, payload, timestamp: new Date(now).toISOString(), server_time_ms: now };
     const message = JSON.stringify(packet);
     this.clients.forEach((client) => {
-      if (client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(message);
+      if (client.role === "audience" && client.ws.readyState === WebSocket.OPEN) {
+        try {
+          client.ws.send(message);
+        } catch {
+        }
       }
     });
     this.sseClients.forEach((client) => {
-      try {
-        client.res.write(`data: ${message}
+      if (client.role === "audience") {
+        try {
+          client.res.write(`data: ${message}
 
 `);
-      } catch {
-        this.sseClients.delete(client);
+        } catch {
+          this.sseClients.delete(client);
+        }
       }
     });
     broadcastSupabaseEvent(type, packet).catch(() => {
     });
   }
   broadcastController(type, payload) {
-    const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const packet = { id, type, payload, timestamp: (/* @__PURE__ */ new Date()).toISOString() };
+    const now = Date.now();
+    const id = `msg_ctrl_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const packet = { id, type, payload, timestamp: new Date(now).toISOString(), server_time_ms: now };
     const message = JSON.stringify(packet);
     this.clients.forEach((client) => {
       if (client.role === "controller" && client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(message);
+        try {
+          client.ws.send(message);
+        } catch {
+        }
       }
     });
     this.sseClients.forEach((client) => {
@@ -1074,8 +1102,29 @@ var WebSocketManager = class {
     });
   }
   broadcastAll(type, payload) {
-    this.broadcastAudience(type, payload);
-    this.broadcastController(type, payload);
+    const now = Date.now();
+    const id = `msg_all_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const packet = { id, type, payload, timestamp: new Date(now).toISOString(), server_time_ms: now };
+    const message = JSON.stringify(packet);
+    this.clients.forEach((client) => {
+      if (client.ws.readyState === WebSocket.OPEN) {
+        try {
+          client.ws.send(message);
+        } catch {
+        }
+      }
+    });
+    this.sseClients.forEach((client) => {
+      try {
+        client.res.write(`data: ${message}
+
+`);
+      } catch {
+        this.sseClients.delete(client);
+      }
+    });
+    broadcastSupabaseEvent(type, packet).catch(() => {
+    });
   }
   getStats() {
     let wsAudience = 0;
@@ -1119,6 +1168,7 @@ var RaffleService = class {
     this.participants = [];
     this.lastWinner = null;
     this.lastEntropyProof = null;
+    this.drawTransitionTimeout = null;
     this.config = config2;
     this.session = {
       event: config2.EVENT_NAME,
@@ -1194,10 +1244,12 @@ var RaffleService = class {
       else if (p.type === "faculty") facultyCount++;
       else if (p.type === "guest") guestCount++;
     }
-    const resultsData = await supabaseRepository.getResults();
-    const pageAccess = await supabaseRepository.getPageAccessSettings();
+    const [resultsData, pageAccess, registrationRequests] = await Promise.all([
+      supabaseRepository.getResults(),
+      supabaseRepository.getPageAccessSettings(),
+      supabaseRepository.getRegistrationRequests()
+    ]);
     const visitorAnalytics = supabaseRepository.getVisitorAnalytics();
-    const registrationRequests = await supabaseRepository.getRegistrationRequests();
     const pendingRegCount = registrationRequests.filter((r) => r.status === "pending").length;
     return {
       ...this.session,
@@ -1306,33 +1358,51 @@ var RaffleService = class {
         designation: selectedCandidate.designation,
         serial: this.session.next_serial
       };
+      const startTime = Date.now();
+      const cdSec = this.config.DRAW_COUNTDOWN_SECONDS || 5;
+      const rollDurationMs = 2200;
+      const countdownEndMs = startTime + cdSec * 1e3;
+      const revealTimeMs = countdownEndMs + rollDurationMs;
       const drawStartPayload = {
         serial: this.session.next_serial,
-        countdown_seconds: this.config.DRAW_COUNTDOWN_SECONDS,
+        countdown_seconds: cdSec,
+        start_time_ms: startTime,
+        countdown_end_ms: countdownEndMs,
+        roll_duration_ms: rollDurationMs,
+        reveal_time_ms: revealTimeMs,
         name_roll_ms: this.config.NAME_ROLL_DURATION_MS,
         shuffle_passes: shufflePasses,
         candidate: candidatePayload
       };
-      wsManager.broadcastAudience("DRAW_START", drawStartPayload);
-      wsManager.broadcastController("DRAW_START", drawStartPayload);
-      const controllerState = await this.getControllerState();
-      wsManager.broadcastController("STATE_UPDATED", controllerState);
-      const sequenceDurationMs = 1e3 + this.config.DRAW_COUNTDOWN_SECONDS * 1e3 + 2e3;
-      setTimeout(async () => {
+      wsManager.broadcastAll("DRAW_START", drawStartPayload);
+      this.getControllerState().then((ctrl) => {
+        wsManager.broadcastController("STATE_UPDATED", ctrl);
+      }).catch(() => {
+      });
+      if (this.drawTransitionTimeout) {
+        clearTimeout(this.drawTransitionTimeout);
+        this.drawTransitionTimeout = null;
+      }
+      const sequenceDurationMs = cdSec * 1e3 + rollDurationMs;
+      this.drawTransitionTimeout = setTimeout(async () => {
         if (this.session.status === "DRAWING" && this.session.current_candidate) {
           this.session.status = "WAITING_CONFIRMATION";
           this.session.last_action = "CANDIDATE_REVEALED_ON_STAGE";
           this.session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-          await supabaseRepository.saveSession(this.session);
-          await supabaseRepository.appendAudit("CANDIDATE_REVEALED_FOR_DECISION", {
-            name: selectedCandidate.name,
-            id: selectedCandidate.id,
-            type: selectedCandidate.type,
-            serial: this.session.next_serial
-          });
+          await Promise.all([
+            supabaseRepository.saveSession(this.session),
+            supabaseRepository.appendAudit("CANDIDATE_REVEALED_FOR_DECISION", {
+              name: selectedCandidate.name,
+              id: selectedCandidate.id,
+              type: selectedCandidate.type,
+              serial: this.session.next_serial
+            })
+          ]);
           wsManager.broadcastAudience("CANDIDATE_SELECTED", candidatePayload);
-          const updatedCtrlState = await this.getControllerState();
-          wsManager.broadcastController("STATE_UPDATED", updatedCtrlState);
+          this.getControllerState().then((updatedCtrlState) => {
+            wsManager.broadcastController("STATE_UPDATED", updatedCtrlState);
+          }).catch(() => {
+          });
         }
       }, sequenceDurationMs);
       return {
@@ -1354,11 +1424,22 @@ var RaffleService = class {
     if (this.session.status !== "WAITING_CONFIRMATION" && this.session.status !== "CANDIDATE_SELECTED" && this.session.status !== "DRAWING") {
       return { success: false, message: `INVALID_STATE: Cannot confirm in current state (${this.session.status}).` };
     }
+    if (this.drawTransitionTimeout) {
+      clearTimeout(this.drawTransitionTimeout);
+      this.drawTransitionTimeout = null;
+    }
     this.isLocked = true;
     try {
       const candidate = this.session.current_candidate;
-      await supabaseRepository.markParticipantIneligible(candidate);
-      await this.reloadParticipants();
+      const pIdx = this.participants.findIndex((p) => {
+        if (candidate.id && p.id) {
+          return String(p.id).trim().toLowerCase() === String(candidate.id).trim().toLowerCase();
+        }
+        return p.name.trim().toLowerCase() === candidate.name.trim().toLowerCase() && p.type.toLowerCase() === candidate.type.toLowerCase();
+      });
+      if (pIdx !== -1) {
+        this.participants[pIdx].eligible = 0;
+      }
       const winner = {
         serial: this.session.next_serial,
         type: candidate.type,
@@ -1368,34 +1449,40 @@ var RaffleService = class {
         status: "winner",
         drawn_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      await supabaseRepository.saveWinner(winner, this.lastEntropyProof);
       this.lastWinner = winner;
       this.session.completed_winners += 1;
       this.session.next_serial += 1;
       this.session.current_candidate = null;
-      this.session.status = this.session.completed_winners >= this.session.total_winners ? "COMPLETED" : "WINNER_CONFIRMED";
+      this.session.status = this.session.completed_winners >= this.session.total_winners ? "COMPLETED" : "READY";
       this.session.last_action = `WINNER_#${winner.serial}_CONFIRMED`;
       this.session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-      await supabaseRepository.saveSession(this.session);
-      await supabaseRepository.appendAudit("WINNER_CONFIRMED", {
-        serial: winner.serial,
-        name: winner.name,
-        id: winner.id,
-        type: winner.type,
-        completed_winners: this.session.completed_winners,
-        total_winners: this.session.total_winners
-      });
-      wsManager.broadcastAudience("WINNER_CONFIRMED", {
+      wsManager.broadcastAll("WINNER_CONFIRMED", {
         winner,
         completed_winners: this.session.completed_winners,
         total_winners: this.session.total_winners,
-        is_completed: this.session.status === "COMPLETED"
+        is_completed: this.session.status === "COMPLETED",
+        confirmed_at_ms: Date.now()
       });
-      const ctrlState = await this.getControllerState();
-      wsManager.broadcastController("STATE_UPDATED", ctrlState);
+      await Promise.all([
+        supabaseRepository.markParticipantIneligible(candidate),
+        supabaseRepository.saveWinner(winner, this.lastEntropyProof),
+        supabaseRepository.saveSession(this.session),
+        supabaseRepository.appendAudit("WINNER_CONFIRMED", {
+          serial: winner.serial,
+          name: winner.name,
+          id: winner.id,
+          type: winner.type,
+          completed_winners: this.session.completed_winners,
+          total_winners: this.session.total_winners
+        })
+      ]);
+      this.getControllerState().then((ctrlState) => {
+        wsManager.broadcastController("STATE_UPDATED", ctrlState);
+      }).catch(() => {
+      });
       return {
         success: true,
-        message: `Winner #${winner.serial} confirmed and committed to Supabase.`,
+        message: `Winner #${winner.serial} confirmed successfully!`,
         winner
       };
     } finally {
@@ -1409,11 +1496,22 @@ var RaffleService = class {
     if (!this.session.current_candidate) {
       return { success: false, message: "NO_CANDIDATE: No candidate is currently selected to ignore." };
     }
+    if (this.drawTransitionTimeout) {
+      clearTimeout(this.drawTransitionTimeout);
+      this.drawTransitionTimeout = null;
+    }
     this.isLocked = true;
     try {
       const candidate = this.session.current_candidate;
-      await supabaseRepository.markParticipantIneligible(candidate);
-      await this.reloadParticipants();
+      const pIdx = this.participants.findIndex((p) => {
+        if (candidate.id && p.id) {
+          return String(p.id).trim().toLowerCase() === String(candidate.id).trim().toLowerCase();
+        }
+        return p.name.trim().toLowerCase() === candidate.name.trim().toLowerCase() && p.type.toLowerCase() === candidate.type.toLowerCase();
+      });
+      if (pIdx !== -1) {
+        this.participants[pIdx].eligible = 0;
+      }
       const ignoredRecord = {
         serial: null,
         type: candidate.type,
@@ -1424,34 +1522,44 @@ var RaffleService = class {
         reason,
         drawn_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      await supabaseRepository.saveIgnored(ignoredRecord);
       this.session.current_candidate = null;
-      this.session.status = "IGNORED";
+      this.session.status = "READY";
       this.session.last_action = `CANDIDATE_${candidate.name}_IGNORED`;
       this.session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-      await supabaseRepository.saveSession(this.session);
-      await supabaseRepository.appendAudit("CANDIDATE_IGNORED", {
-        name: candidate.name,
-        id: candidate.id,
-        type: candidate.type,
-        reason
-      });
-      wsManager.broadcastAudience("CANDIDATE_IGNORED", {
+      wsManager.broadcastAll("CANDIDATE_IGNORED", {
         name: candidate.name,
         reason,
-        next_serial: this.session.next_serial
+        next_serial: this.session.next_serial,
+        ignored_at_ms: Date.now()
       });
-      const ctrlState = await this.getControllerState();
-      wsManager.broadcastController("STATE_UPDATED", ctrlState);
+      await Promise.all([
+        supabaseRepository.markParticipantIneligible(candidate),
+        supabaseRepository.saveIgnored(ignoredRecord),
+        supabaseRepository.saveSession(this.session),
+        supabaseRepository.appendAudit("CANDIDATE_IGNORED", {
+          name: candidate.name,
+          id: candidate.id,
+          type: candidate.type,
+          reason
+        })
+      ]);
+      this.getControllerState().then((ctrlState) => {
+        wsManager.broadcastController("STATE_UPDATED", ctrlState);
+      }).catch(() => {
+      });
       return {
         success: true,
-        message: `Candidate ${candidate.name} has been marked as ignored and ineligible in Supabase.`
+        message: `Candidate ${candidate.name} marked absent. Ready for next draw.`
       };
     } finally {
       this.isLocked = false;
     }
   }
   async pause() {
+    if (this.drawTransitionTimeout) {
+      clearTimeout(this.drawTransitionTimeout);
+      this.drawTransitionTimeout = null;
+    }
     if (this.session.status === "PAUSED") {
       return { success: true, message: "Already paused." };
     }
@@ -1460,7 +1568,7 @@ var RaffleService = class {
     this.session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     await supabaseRepository.saveSession(this.session);
     await supabaseRepository.appendAudit("DRAW_PAUSED");
-    wsManager.broadcastAudience("PAUSED", {});
+    wsManager.broadcastAll("PAUSED", { paused_at_ms: Date.now() });
     const ctrlState = await this.getControllerState();
     wsManager.broadcastController("STATE_UPDATED", ctrlState);
     return { success: true, message: "Raffle paused." };
@@ -1474,7 +1582,7 @@ var RaffleService = class {
     this.session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     await supabaseRepository.saveSession(this.session);
     await supabaseRepository.appendAudit("DRAW_RESUMED");
-    wsManager.broadcastAudience("RESUMED", {});
+    wsManager.broadcastAll("RESUMED", { resumed_at_ms: Date.now() });
     const ctrlState = await this.getControllerState();
     wsManager.broadcastController("STATE_UPDATED", ctrlState);
     return { success: true, message: "Raffle resumed." };
@@ -1490,7 +1598,7 @@ var RaffleService = class {
     await supabaseRepository.appendAudit("INTERRUPTED_CANDIDATE_RESTORED", {
       candidate: this.session.current_candidate
     });
-    wsManager.broadcastAudience("CANDIDATE_SELECTED", {
+    wsManager.broadcastAll("CANDIDATE_SELECTED", {
       type: this.session.current_candidate.type,
       id: this.session.current_candidate.id,
       name: this.session.current_candidate.name,
@@ -1502,6 +1610,10 @@ var RaffleService = class {
     return { success: true, message: "Interrupted candidate restored to active state." };
   }
   async cancelInterrupted() {
+    if (this.drawTransitionTimeout) {
+      clearTimeout(this.drawTransitionTimeout);
+      this.drawTransitionTimeout = null;
+    }
     if (this.session.status !== "INTERRUPTED") {
       return { success: false, message: "No interrupted draw to cancel." };
     }
@@ -1512,12 +1624,16 @@ var RaffleService = class {
     this.session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     await supabaseRepository.saveSession(this.session);
     await supabaseRepository.appendAudit("INTERRUPTED_DRAW_CANCELLED", { candidate: oldCandidate });
-    wsManager.broadcastAudience("RESET", {});
+    wsManager.broadcastAll("RESET", { reset_at_ms: Date.now() });
     const ctrlState = await this.getControllerState();
     wsManager.broadcastController("STATE_UPDATED", ctrlState);
     return { success: true, message: "Interrupted draw cancelled. Participant remains eligible." };
   }
   async resetSession(typedConfirmation) {
+    if (this.drawTransitionTimeout) {
+      clearTimeout(this.drawTransitionTimeout);
+      this.drawTransitionTimeout = null;
+    }
     if (typedConfirmation !== "RESET") {
       return {
         success: false,
@@ -1541,7 +1657,7 @@ var RaffleService = class {
     };
     await supabaseRepository.saveSession(this.session);
     await supabaseRepository.appendAudit("SESSION_RESET", { reset_at: (/* @__PURE__ */ new Date()).toISOString() });
-    wsManager.broadcastAudience("RESET", { message: "A new raffle session has been initiated." });
+    wsManager.broadcastAll("RESET", { message: "A new raffle session has been initiated.", reset_at_ms: Date.now() });
     const ctrlState = await this.getControllerState();
     wsManager.broadcastController("STATE_UPDATED", ctrlState);
     return {

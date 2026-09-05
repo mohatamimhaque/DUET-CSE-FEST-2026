@@ -1,0 +1,27 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "total_winners": 10,
+  "results": [
+    {
+      "serial": 1,
+      "type": "student",
+      "id": "2003024",
+      "name": "Sadia Rahman",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T10:04:06.648Z"
+    }
+  ],
+  "ignored": [
+    {
+      "serial": null,
+      "type": "student",
+      "id": "2303049",
+      "name": "Faisal Hossain",
+      "designation": null,
+      "status": "ignored",
+      "reason": "absent",
+      "drawn_at": "2026-09-05T10:04:06.673Z"
+    }
+  ]
+}

@@ -24,15 +24,6 @@ const app = express();
 const server = http.createServer(app);
 const PORT = 3000;
 
-// Security hardening
-app.disable('x-powered-by');
-app.use((_req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  next();
-});
-
 // Check if running in a serverless environment (Vercel, AWS Lambda)
 const isServerless = Boolean(
   process.env.VERCEL ||
@@ -41,23 +32,57 @@ const isServerless = Boolean(
   process.env.AWS_LAMBDA_FUNCTION_NAME
 );
 
+// Security hardening
+app.disable('x-powered-by');
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isServerless) {
+    res.setHeader('X-Serverless-Mode', 'true');
+    res.setHeader('X-WS-Supported', 'false');
+  }
+  next();
+});
+
 // Path compatibility for serverless environments (e.g. Vercel, AWS Lambda, Proxies)
 app.use((req: Request, _res: Response, next: NextFunction) => {
-  // Check if Vercel or proxy passed the original requested path in headers
-  const matchedPath = (req.headers['x-matched-path'] || req.headers['x-vercel-matched-path']) as string | undefined;
-  if (matchedPath && (matchedPath.startsWith('/api/') || matchedPath.startsWith('/public/') || matchedPath.startsWith('/controller/'))) {
-    const urlParts = req.url.split('?');
-    const query = urlParts[1] ? `?${urlParts[1]}` : '';
-    req.url = matchedPath.startsWith('/api/') ? matchedPath + query : '/api' + matchedPath + query;
-  } else if (req.url && !req.url.startsWith('/api')) {
-    // If the /api prefix was stripped by serverless rewrite rule
-    if (
-      req.url.startsWith('/public') ||
-      req.url.startsWith('/controller') ||
-      req.url.startsWith('/health') ||
-      req.url.startsWith('/ws')
+  // Check if Vercel or reverse proxy passed the original requested path in headers
+  const originalUri = (
+    req.headers['x-forwarded-uri'] ||
+    req.headers['x-original-url'] ||
+    req.headers['x-matched-path'] ||
+    req.headers['x-vercel-matched-path']
+  ) as string | undefined;
+
+  if (originalUri) {
+    const rawPath = originalUri.split('?')[0];
+    if (rawPath.startsWith('/api/') || rawPath === '/api') {
+      const query = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
+      req.url = rawPath + query;
+    } else if (
+      rawPath.startsWith('/public/') ||
+      rawPath.startsWith('/controller/') ||
+      rawPath.startsWith('/health') ||
+      rawPath.startsWith('/results') ||
+      rawPath.startsWith('/ws')
     ) {
-      req.url = '/api' + req.url;
+      const query = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
+      req.url = '/api' + (rawPath.startsWith('/') ? rawPath : '/' + rawPath) + query;
+    }
+  }
+
+  // If the /api prefix was stripped by serverless rewrite rules
+  if (req.url && !req.url.startsWith('/api')) {
+    const cleanUrl = req.url.startsWith('/') ? req.url : '/' + req.url;
+    if (
+      cleanUrl.startsWith('/public') ||
+      cleanUrl.startsWith('/controller') ||
+      cleanUrl.startsWith('/health') ||
+      cleanUrl.startsWith('/results') ||
+      cleanUrl.startsWith('/ws')
+    ) {
+      req.url = '/api' + cleanUrl;
     }
   }
   next();
@@ -79,9 +104,11 @@ if (isDirectExecution && !isServerless) {
 
 // Fallback HTTP route for WebSocket endpoints on serverless platforms
 app.all(['/ws', '/ws/*', '/api/ws', '/api/ws/*'], (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'fallback',
-    message: 'WebSocket upgrade not supported in serverless mode. Client synchronizes via Supabase Realtime and HTTP polling.',
+  res.setHeader('X-WS-Supported', 'false');
+  res.status(426).json({
+    status: 'ws_unavailable_serverless',
+    ws_supported: false,
+    message: 'WebSocket TCP upgrades are not available in serverless functions. Real-time synchronization is handled automatically via Supabase Realtime and HTTP polling.',
   });
 });
 
@@ -97,14 +124,6 @@ app.get('/favicon.ico', (_req: Request, res: Response) => {
 });
 app.get('/favicon.svg', (_req: Request, res: Response) => {
   res.type('image/svg+xml').sendFile(path.join(process.cwd(), 'public', 'favicon.svg'));
-});
-
-// Serverless fallback response for WebSocket upgrade endpoint
-app.all(['/ws', '/ws/*'], (_req: Request, res: Response) => {
-  res.status(501).json({
-    status: 'ws_unavailable_serverless',
-    message: 'WebSocket direct TCP upgrades are not available in serverless functions. Real-time synchronization is handled automatically via HTTP polling and SSE.',
-  });
 });
 
 // Helper: Generate secure session token
@@ -162,6 +181,25 @@ function requireControllerAuth(req: Request, res: Response, next: NextFunction) 
 // 1. PUBLIC APIS
 // ==========================================
 
+// API Root Status / Discovery endpoint
+app.get(['/api', '/api/'], (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'DUET CSE Fest 2026 Raffle API',
+    event: config.EVENT_NAME,
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      state: '/api/public/state',
+      event: '/api/public/event',
+      participants: '/api/public/participants',
+      results: '/api/results',
+      page_access: '/api/public/page-access-status',
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get('/api/public/event', (_req: Request, res: Response) => {
   const supa = getSupabaseConfig();
   res.json({
@@ -178,11 +216,18 @@ app.get('/api/public/event', (_req: Request, res: Response) => {
       anon_key: process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
       is_configured: supa.isConfigured,
     },
+    ws_supported: !isServerless,
+    is_serverless: isServerless,
   });
 });
 
 app.get(['/api/public/draw/state', '/api/public/state'], (_req: Request, res: Response) => {
-  res.json(raffleService.getPublicState());
+  const state = raffleService.getPublicState();
+  res.json({
+    ...state,
+    ws_supported: !isServerless,
+    is_serverless: isServerless,
+  });
 });
 
 // Page Access Status Query for Client Guards
@@ -427,7 +472,11 @@ app.get('/api/controller/auth/check', (req: Request, res: Response) => {
 
 app.get('/api/controller/state', requireControllerAuth, async (_req: Request, res: Response) => {
   const state = await raffleService.getControllerState();
-  res.json(state);
+  res.json({
+    ...state,
+    ws_supported: !isServerless,
+    is_serverless: isServerless,
+  });
 });
 
 app.get('/api/controller/participants/search', requireControllerAuth, async (req: Request, res: Response) => {

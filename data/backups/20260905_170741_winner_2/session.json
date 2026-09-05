@@ -1,0 +1,16 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "status": "WAITING_CONFIRMATION",
+  "total_winners": 10,
+  "completed_winners": 1,
+  "next_serial": 2,
+  "current_candidate": {
+    "type": "student",
+    "id": "2203035",
+    "name": "Tanzim Habib",
+    "designation": null,
+    "eligible": 1
+  },
+  "last_action": "CANDIDATE_REVEALED_ON_STAGE",
+  "updated_at": "2026-09-05T11:07:33.940Z"
+}

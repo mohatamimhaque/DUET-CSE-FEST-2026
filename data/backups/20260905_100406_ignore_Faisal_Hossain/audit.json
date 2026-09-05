@@ -1,0 +1,62 @@
+[
+  {
+    "action": "SYSTEM_INITIALIZED",
+    "timestamp": "2026-09-05T09:59:21.207Z",
+    "details": {
+      "total_participants": 215,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:00:51.241Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED",
+    "timestamp": "2026-09-05T10:04:06.640Z",
+    "details": {
+      "next_serial": 1
+    }
+  },
+  {
+    "action": "CANDIDATE_SELECTED",
+    "timestamp": "2026-09-05T10:04:06.641Z",
+    "details": {
+      "name": "Sadia Rahman",
+      "id": "2003024",
+      "type": "student"
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T10:04:06.649Z",
+    "details": {
+      "serial": 1,
+      "name": "Sadia Rahman",
+      "id": "2003024",
+      "type": "student",
+      "completed_winners": 1,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED",
+    "timestamp": "2026-09-05T10:04:06.662Z",
+    "details": {
+      "next_serial": 2
+    }
+  },
+  {
+    "action": "CANDIDATE_SELECTED",
+    "timestamp": "2026-09-05T10:04:06.662Z",
+    "details": {
+      "name": "Faisal Hossain",
+      "id": "2303049",
+      "type": "student"
+    }
+  }
+]

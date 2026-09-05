@@ -1,0 +1,25 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "total_winners": 10,
+  "results": [
+    {
+      "serial": 1,
+      "type": "student",
+      "id": "2103010",
+      "name": "Sadia Sakib",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:42:37.637Z"
+    },
+    {
+      "serial": 2,
+      "type": "staff",
+      "id": null,
+      "name": "Md. Shah Alam",
+      "designation": "Hardware Specialist",
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:43:02.804Z"
+    }
+  ],
+  "ignored": []
+}

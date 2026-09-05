@@ -355,6 +355,9 @@ export const ControllerConsole: React.FC = () => {
           const finalCandidate = pendingCandidateRef.current || candidate;
           setRevealedCandidate(finalCandidate);
           setStagePhase('CANDIDATE_REVEAL');
+          if (finalCandidate) {
+            showToast(`Candidate selected: ${finalCandidate.name}`, 'info');
+          }
           if (soundEnabledRef.current) {
             try {
               soundEngine.playCandidateSelectSound();

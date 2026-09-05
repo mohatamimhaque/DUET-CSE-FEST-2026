@@ -1,0 +1,10 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "status": "READY",
+  "total_winners": 10,
+  "completed_winners": 0,
+  "next_serial": 1,
+  "current_candidate": null,
+  "last_action": "SESSION_RESET_TO_INITIAL",
+  "updated_at": "2026-09-05T10:46:48.203Z"
+}

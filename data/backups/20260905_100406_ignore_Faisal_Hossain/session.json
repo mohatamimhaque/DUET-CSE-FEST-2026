@@ -1,0 +1,16 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "status": "WAITING_CONFIRMATION",
+  "total_winners": 10,
+  "completed_winners": 1,
+  "next_serial": 2,
+  "current_candidate": {
+    "type": "student",
+    "id": "2303049",
+    "name": "Faisal Hossain",
+    "designation": null,
+    "eligible": 1
+  },
+  "last_action": "CANDIDATE_SELECTED",
+  "updated_at": "2026-09-05T10:04:06.662Z"
+}

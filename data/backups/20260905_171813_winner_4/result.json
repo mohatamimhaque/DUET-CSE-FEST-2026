@@ -1,0 +1,75 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "total_winners": 10,
+  "results": [
+    {
+      "serial": 1,
+      "type": "student",
+      "id": "2103018",
+      "name": "Sadia Sakib",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:09:29.438Z"
+    },
+    {
+      "serial": 2,
+      "type": "student",
+      "id": "2203045",
+      "name": "Afroza Sakib",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:11:14.373Z"
+    },
+    {
+      "serial": 3,
+      "type": "student",
+      "id": "2303046",
+      "name": "Nusrat Nasrin",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:11:38.452Z"
+    }
+  ],
+  "ignored": [
+    {
+      "serial": null,
+      "type": "student",
+      "id": "2303059",
+      "name": "Kazi Karim",
+      "designation": null,
+      "status": "ignored",
+      "reason": "absent",
+      "drawn_at": "2026-09-05T11:12:07.483Z"
+    },
+    {
+      "serial": null,
+      "type": "student",
+      "id": "2303042",
+      "name": "Sharmin Sakib",
+      "designation": null,
+      "status": "ignored",
+      "reason": "absent",
+      "drawn_at": "2026-09-05T11:12:34.368Z"
+    },
+    {
+      "serial": null,
+      "type": "student",
+      "id": "2003004",
+      "name": "Farhana Rahman",
+      "designation": null,
+      "status": "ignored",
+      "reason": "absent",
+      "drawn_at": "2026-09-05T11:13:00.380Z"
+    },
+    {
+      "serial": null,
+      "type": "student",
+      "id": "2203014",
+      "name": "Tanvir Haque",
+      "designation": null,
+      "status": "ignored",
+      "reason": "absent",
+      "drawn_at": "2026-09-05T11:13:45.522Z"
+    }
+  ]
+}

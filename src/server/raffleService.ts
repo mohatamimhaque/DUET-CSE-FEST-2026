@@ -311,7 +311,7 @@ export class RaffleService {
 
       return {
         success: true,
-        message: `Draw pipeline executed: candidate ${selectedCandidate.name} chosen with zero-modulo-bias cryptographic selection.`,
+        message: `Draw initiated: cryptographic zero-modulo-bias selection in progress on stage.`,
         candidate: selectedCandidate,
       };
     } finally {

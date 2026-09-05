@@ -24,6 +24,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
   const isDestroyedRef = useRef<boolean>(false);
   const reconnectAttemptsRef = useRef<number>(0);
   const wsDisabledRef = useRef<boolean>(false);
+  const wsHandshakeSucceededRef = useRef<boolean>(false);
 
   const handleIncomingMessage = useCallback((raw: string) => {
     try {
@@ -83,8 +84,33 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
       }
       const res = await fetch(endpoint, { headers });
       if (!res.ok) return;
+
+      // Auto-detect serverless hosting via response headers or JSON payload
+      const isServerlessHeader = res.headers.get('x-serverless-mode') === 'true' || Boolean(res.headers.get('x-vercel-id'));
+      const isWsDisabledHeader = res.headers.get('x-ws-supported') === 'false';
+
       const data = await res.json();
       setIsConnected(true);
+
+      if (isServerlessHeader || isWsDisabledHeader || data.ws_supported === false) {
+        if (!wsDisabledRef.current) {
+          wsDisabledRef.current = true;
+          try {
+            sessionStorage.setItem('raffle_ws_disabled', '1');
+            (window as any).__WS_DISABLED__ = true;
+          } catch {}
+          if (wsRef.current && wsRef.current.readyState !== WebSocket.OPEN) {
+            try {
+              wsRef.current.close();
+            } catch {}
+            wsRef.current = null;
+          }
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+        }
+      }
 
       // Create a deterministic signature based on draw-relevant state
       const sig = `${data.status}_${data.next_serial}_${data.completed_winners}_${data.current_candidate?.id || ''}_${data.last_winner?.id || ''}_${data.is_locked ? 1 : 0}`;
@@ -146,9 +172,17 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
   const connectWs = useCallback(() => {
     if (typeof window === 'undefined' || isDestroyedRef.current || wsDisabledRef.current) return;
 
-    // Detect serverless deployment domains that do not support persistent custom WebSockets
+    // Detect serverless deployment domains or sessions where custom WebSockets are unsupported
+    const isStoredDisabled = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('raffle_ws_disabled') === '1';
     const hostname = window.location.hostname;
-    if (hostname.includes('vercel.app')) {
+    const isKnownServerlessDomain =
+      hostname.includes('vercel.app') ||
+      hostname.includes('now.sh') ||
+      hostname.includes('lexinovax.app') ||
+      Boolean((window as any).__WS_DISABLED__);
+
+    if (isStoredDisabled || isKnownServerlessDomain) {
+      wsDisabledRef.current = true;
       return;
     }
 
@@ -156,6 +190,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
       const wsUrl = `${protocol}//${host}/ws/${role}`;
+      wsHandshakeSucceededRef.current = false;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -164,6 +199,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
           ws.close();
           return;
         }
+        wsHandshakeSucceededRef.current = true;
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
 
@@ -186,13 +222,32 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         if (isDestroyedRef.current) return;
 
-        // Auto-reconnect with snappy delay (250ms to 2.5s)
+        // Handshake failed or server returned non-101 (e.g. Vercel serverless 200/501/426)
+        // Permanently trip the circuit breaker so the browser never loops retries
+        if (!wsHandshakeSucceededRef.current) {
+          wsDisabledRef.current = true;
+          try {
+            sessionStorage.setItem('raffle_ws_disabled', '1');
+            (window as any).__WS_DISABLED__ = true;
+          } catch {}
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+          return;
+        }
+
+        // Only reconnect if the connection was legitimately established before dropping
         const delay = Math.min(2500, 250 + reconnectAttemptsRef.current * 350);
         reconnectAttemptsRef.current += 1;
+        if (reconnectAttemptsRef.current > 5) {
+          wsDisabledRef.current = true;
+          return;
+        }
         
         if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = setTimeout(() => {
-          if (!isDestroyedRef.current) {
+          if (!isDestroyedRef.current && !wsDisabledRef.current) {
             connectWs();
           }
         }, delay);
@@ -204,17 +259,42 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
       };
 
       ws.onerror = () => {
+        if (!wsHandshakeSucceededRef.current) {
+          wsDisabledRef.current = true;
+          try {
+            sessionStorage.setItem('raffle_ws_disabled', '1');
+            (window as any).__WS_DISABLED__ = true;
+          } catch {}
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+        }
         try {
           ws.close();
         } catch {}
       };
     } catch {
       // WS error fallback
+      wsDisabledRef.current = true;
     }
   }, [role, handleIncomingMessage]);
 
   const connectSse = useCallback(() => {
     if (typeof window === 'undefined' || typeof EventSource === 'undefined' || isDestroyedRef.current) return;
+
+    // Avoid long-lived SSE connections on serverless hosts that timeout or buffer
+    const isStoredDisabled = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('raffle_ws_disabled') === '1';
+    const hostname = window.location.hostname;
+    if (
+      wsDisabledRef.current ||
+      isStoredDisabled ||
+      hostname.includes('vercel.app') ||
+      hostname.includes('lexinovax.app') ||
+      Boolean((window as any).__WS_DISABLED__)
+    ) {
+      return;
+    }
 
     try {
       const sseUrl = role === 'controller' ? '/api/controller/events' : '/api/public/events';

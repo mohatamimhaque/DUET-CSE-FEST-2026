@@ -1,0 +1,16 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "status": "DRAWING",
+  "total_winners": 10,
+  "completed_winners": 0,
+  "next_serial": 1,
+  "current_candidate": {
+    "type": "student",
+    "id": "2103029",
+    "name": "Mehedi Ema",
+    "designation": null,
+    "eligible": 1
+  },
+  "last_action": "CANDIDATE_SELECTED_ROUND_1",
+  "updated_at": "2026-09-05T10:46:31.672Z"
+}

@@ -1,0 +1,16 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "status": "WAITING_CONFIRMATION",
+  "total_winners": 10,
+  "completed_winners": 2,
+  "next_serial": 3,
+  "current_candidate": {
+    "type": "student",
+    "id": "2303046",
+    "name": "Nusrat Nasrin",
+    "designation": null,
+    "eligible": 1
+  },
+  "last_action": "CANDIDATE_REVEALED_ON_STAGE",
+  "updated_at": "2026-09-05T11:11:32.386Z"
+}

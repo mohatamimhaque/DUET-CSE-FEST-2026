@@ -1,0 +1,627 @@
+[
+  {
+    "action": "SYSTEM_INITIALIZED",
+    "timestamp": "2026-09-05T09:59:21.207Z",
+    "details": {
+      "total_participants": 215,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:00:51.241Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED",
+    "timestamp": "2026-09-05T10:04:06.640Z",
+    "details": {
+      "next_serial": 1
+    }
+  },
+  {
+    "action": "CANDIDATE_SELECTED",
+    "timestamp": "2026-09-05T10:04:06.641Z",
+    "details": {
+      "name": "Sadia Rahman",
+      "id": "2003024",
+      "type": "student"
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T10:04:06.649Z",
+    "details": {
+      "serial": 1,
+      "name": "Sadia Rahman",
+      "id": "2003024",
+      "type": "student",
+      "completed_winners": 1,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED",
+    "timestamp": "2026-09-05T10:04:06.662Z",
+    "details": {
+      "next_serial": 2
+    }
+  },
+  {
+    "action": "CANDIDATE_SELECTED",
+    "timestamp": "2026-09-05T10:04:06.662Z",
+    "details": {
+      "name": "Faisal Hossain",
+      "id": "2303049",
+      "type": "student"
+    }
+  },
+  {
+    "action": "CANDIDATE_IGNORED",
+    "timestamp": "2026-09-05T10:04:06.674Z",
+    "details": {
+      "name": "Faisal Hossain",
+      "id": "2303049",
+      "type": "student",
+      "reason": "absent"
+    }
+  },
+  {
+    "action": "SESSION_RESET",
+    "timestamp": "2026-09-05T10:04:06.697Z",
+    "details": {
+      "backup_location": "/app/applet/data/backups/20260905_100406_session_reset"
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:04:57.593Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED",
+    "timestamp": "2026-09-05T10:09:30.133Z",
+    "details": {
+      "next_serial": 1
+    }
+  },
+  {
+    "action": "CANDIDATE_SELECTED",
+    "timestamp": "2026-09-05T10:09:30.134Z",
+    "details": {
+      "name": "Engr. Al-Amin Hossain",
+      "id": null,
+      "type": "faculty"
+    }
+  },
+  {
+    "action": "SYSTEM_RESTART_INTERRUPTED_DRAW_DETECTED",
+    "timestamp": "2026-09-05T10:12:12.178Z",
+    "details": {
+      "candidate": {
+        "type": "faculty",
+        "id": null,
+        "name": "Engr. Al-Amin Hossain",
+        "designation": "Lecturer",
+        "eligible": 1
+      }
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:22:51.215Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:23:21.244Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:23:42.046Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:26:40.815Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:27:00.679Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_PAUSED",
+    "timestamp": "2026-09-05T10:32:33.363Z"
+  },
+  {
+    "action": "DRAW_RESUMED",
+    "timestamp": "2026-09-05T10:32:38.525Z"
+  },
+  {
+    "action": "DRAW_STARTED",
+    "timestamp": "2026-09-05T10:32:41.396Z",
+    "details": {
+      "next_serial": 1
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SHUFFLE",
+    "timestamp": "2026-09-05T10:32:41.398Z",
+    "details": {
+      "next_serial": 1,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 215,
+      "selected_candidate": {
+        "name": "Md. Arif Rahman",
+        "id": "2103016",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED",
+    "timestamp": "2026-09-05T10:32:49.400Z",
+    "details": {
+      "name": "Md. Arif Rahman",
+      "id": "2103016",
+      "type": "student",
+      "serial": 1
+    }
+  },
+  {
+    "action": "SYSTEM_RESTART_INTERRUPTED_DRAW_DETECTED",
+    "timestamp": "2026-09-05T10:33:33.216Z",
+    "details": {
+      "candidate": {
+        "type": "student",
+        "id": "2103016",
+        "name": "Md. Arif Rahman",
+        "designation": null,
+        "eligible": 1
+      }
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:34:04.616Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:34:26.598Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T10:34:53.630Z",
+    "details": {
+      "next_serial": 1,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 215,
+      "selected_index": 106,
+      "selected_candidate": {
+        "name": "Engr. Sabrina Sharmin",
+        "id": null,
+        "type": "faculty"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T10:35:01.633Z",
+    "details": {
+      "name": "Engr. Sabrina Sharmin",
+      "id": null,
+      "type": "faculty",
+      "serial": 1
+    }
+  },
+  {
+    "action": "SYSTEM_RESTART_INTERRUPTED_DRAW_DETECTED",
+    "timestamp": "2026-09-05T10:37:43.636Z",
+    "details": {
+      "candidate": {
+        "type": "faculty",
+        "id": null,
+        "name": "Engr. Sabrina Sharmin",
+        "designation": "Assistant Professor",
+        "eligible": 1
+      }
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:37:52.754Z",
+    "details": {
+      "completed_winners": 0,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "CANDIDATE_IGNORED",
+    "timestamp": "2026-09-05T10:38:14.672Z",
+    "details": {
+      "name": "Engr. Sabrina Sharmin",
+      "id": null,
+      "type": "faculty",
+      "reason": "absent"
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T10:38:16.183Z",
+    "details": {
+      "next_serial": 1,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 214,
+      "selected_index": 73,
+      "selected_candidate": {
+        "name": "Sabbir Begum",
+        "id": "2203005",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T10:38:24.186Z",
+    "details": {
+      "name": "Sabbir Begum",
+      "id": "2203005",
+      "type": "student",
+      "serial": 1
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T10:38:37.126Z",
+    "details": {
+      "serial": 1,
+      "name": "Sabbir Begum",
+      "id": "2203005",
+      "type": "student",
+      "completed_winners": 1,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T10:41:11.111Z",
+    "details": {
+      "next_serial": 2,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 213,
+      "selected_index": 78,
+      "selected_candidate": {
+        "name": "Sadia Sakib",
+        "id": "2103034",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T10:41:19.114Z",
+    "details": {
+      "name": "Sadia Sakib",
+      "id": "2103034",
+      "type": "student",
+      "serial": 2
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T10:41:48.507Z",
+    "details": {
+      "serial": 2,
+      "name": "Sadia Sakib",
+      "id": "2103034",
+      "type": "student",
+      "completed_winners": 2,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SYSTEM_RESTARTED_SESSION_RESUMED",
+    "timestamp": "2026-09-05T10:42:51.507Z",
+    "details": {
+      "completed_winners": 2,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T10:44:50.945Z",
+    "details": {
+      "next_serial": 3,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 212,
+      "selected_index": 79,
+      "selected_candidate": {
+        "name": "Salma Siddiqua",
+        "id": "2303031",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T10:44:58.948Z",
+    "details": {
+      "name": "Salma Siddiqua",
+      "id": "2303031",
+      "type": "student",
+      "serial": 3
+    }
+  },
+  {
+    "action": "SESSION_RESET",
+    "timestamp": "2026-09-05T10:45:00.852Z",
+    "details": {
+      "backup_location": "/app/applet/data/backups/20260905_104500_session_reset"
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T10:45:22.246Z",
+    "details": {
+      "next_serial": 1,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 215,
+      "selected_index": 38,
+      "selected_candidate": {
+        "name": "Mahfuzur Mim",
+        "id": "2203010",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T10:45:30.248Z",
+    "details": {
+      "name": "Mahfuzur Mim",
+      "id": "2203010",
+      "type": "student",
+      "serial": 1
+    }
+  },
+  {
+    "action": "SYSTEM_RESTART_INTERRUPTED_DRAW_DETECTED",
+    "timestamp": "2026-09-05T10:46:01.692Z",
+    "details": {
+      "candidate": {
+        "type": "student",
+        "id": "2203010",
+        "name": "Mahfuzur Mim",
+        "designation": null,
+        "eligible": 1
+      }
+    }
+  },
+  {
+    "action": "SESSION_RESET",
+    "timestamp": "2026-09-05T10:46:31.163Z",
+    "details": {
+      "backup_location": "/app/applet/data/backups/20260905_104631_session_reset"
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T10:46:31.672Z",
+    "details": {
+      "next_serial": 1,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 215,
+      "selected_index": 9,
+      "selected_candidate": {
+        "name": "Mehedi Ema",
+        "id": "2103029",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T10:46:32.481Z",
+    "details": {
+      "serial": 1,
+      "name": "Mehedi Ema",
+      "id": "2103029",
+      "type": "student",
+      "completed_winners": 1,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "SESSION_RESET",
+    "timestamp": "2026-09-05T10:46:48.204Z",
+    "details": {
+      "backup_location": "/app/applet/data/backups/20260905_104648_session_reset"
+    }
+  },
+  {
+    "action": "SESSION_RESET",
+    "timestamp": "2026-09-05T11:42:07.483Z",
+    "details": {
+      "backup_location": "D:\\duet-cse-fest-2026-raffle-draw\\data\\backups\\20260905_174207_session_reset"
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T11:42:26.531Z",
+    "details": {
+      "next_serial": 1,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 215,
+      "selected_index": 7,
+      "selected_candidate": {
+        "name": "Sadia Sakib",
+        "id": "2103010",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T11:42:34.561Z",
+    "details": {
+      "name": "Sadia Sakib",
+      "id": "2103010",
+      "type": "student",
+      "serial": 1
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T11:42:37.658Z",
+    "details": {
+      "serial": 1,
+      "name": "Sadia Sakib",
+      "id": "2103010",
+      "type": "student",
+      "completed_winners": 1,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T11:42:50.512Z",
+    "details": {
+      "next_serial": 2,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 214,
+      "selected_index": 2,
+      "selected_candidate": {
+        "name": "Md. Shah Alam",
+        "id": null,
+        "type": "staff"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T11:42:58.535Z",
+    "details": {
+      "name": "Md. Shah Alam",
+      "id": null,
+      "type": "staff",
+      "serial": 2
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T11:43:02.821Z",
+    "details": {
+      "serial": 2,
+      "name": "Md. Shah Alam",
+      "id": null,
+      "type": "staff",
+      "completed_winners": 2,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T11:43:14.723Z",
+    "details": {
+      "next_serial": 3,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 213,
+      "selected_index": 129,
+      "selected_candidate": {
+        "name": "Sabrina Khatun",
+        "id": "2303021",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T11:43:22.747Z",
+    "details": {
+      "name": "Sabrina Khatun",
+      "id": "2303021",
+      "type": "student",
+      "serial": 3
+    }
+  },
+  {
+    "action": "WINNER_CONFIRMED",
+    "timestamp": "2026-09-05T11:43:52.597Z",
+    "details": {
+      "serial": 3,
+      "name": "Sabrina Khatun",
+      "id": "2303021",
+      "type": "student",
+      "completed_winners": 3,
+      "total_winners": 10
+    }
+  },
+  {
+    "action": "DRAW_STARTED_WITH_SNAPSHOT_SELECTION",
+    "timestamp": "2026-09-05T11:44:04.241Z",
+    "details": {
+      "next_serial": 4,
+      "shuffle_passes": 7,
+      "eligible_pool_size": 212,
+      "selected_index": 73,
+      "selected_candidate": {
+        "name": "Farhana Mim",
+        "id": "2303004",
+        "type": "student"
+      },
+      "countdown_seconds": 5
+    }
+  },
+  {
+    "action": "CANDIDATE_REVEALED_FOR_DECISION",
+    "timestamp": "2026-09-05T11:44:12.265Z",
+    "details": {
+      "name": "Farhana Mim",
+      "id": "2303004",
+      "type": "student",
+      "serial": 4
+    }
+  }
+]

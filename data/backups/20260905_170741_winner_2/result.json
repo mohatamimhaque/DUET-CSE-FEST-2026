@@ -1,0 +1,27 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "total_winners": 10,
+  "results": [
+    {
+      "serial": 1,
+      "type": "student",
+      "id": "2203047",
+      "name": "Fatima Habib",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:06:44.779Z"
+    }
+  ],
+  "ignored": [
+    {
+      "serial": null,
+      "type": "student",
+      "id": "2003015",
+      "name": "Zubair Sakib",
+      "designation": null,
+      "status": "ignored",
+      "reason": "absent",
+      "drawn_at": "2026-09-05T11:07:21.314Z"
+    }
+  ]
+}

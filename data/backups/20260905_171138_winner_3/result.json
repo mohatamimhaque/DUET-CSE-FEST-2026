@@ -1,0 +1,25 @@
+{
+  "event": "DUET CSE Fest 2026",
+  "total_winners": 10,
+  "results": [
+    {
+      "serial": 1,
+      "type": "student",
+      "id": "2103018",
+      "name": "Sadia Sakib",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:09:29.438Z"
+    },
+    {
+      "serial": 2,
+      "type": "student",
+      "id": "2203045",
+      "name": "Afroza Sakib",
+      "designation": null,
+      "status": "winner",
+      "drawn_at": "2026-09-05T11:11:14.373Z"
+    }
+  ],
+  "ignored": []
+}
