@@ -33,10 +33,32 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Path compatibility for serverless environments (if /api prefix was stripped)
+// Check if running in a serverless environment (Vercel, AWS Lambda)
+const isServerless = Boolean(
+  process.env.VERCEL ||
+  process.env.VERCEL_ENV ||
+  process.env.NOW_REGION ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME
+);
+
+// Path compatibility for serverless environments (e.g. Vercel, AWS Lambda, Proxies)
 app.use((req: Request, _res: Response, next: NextFunction) => {
-  if (req.url && (req.url.startsWith('/public/') || req.url.startsWith('/controller/action/'))) {
-    req.url = '/api' + req.url;
+  // Check if Vercel or proxy passed the original requested path in headers
+  const matchedPath = (req.headers['x-matched-path'] || req.headers['x-vercel-matched-path']) as string | undefined;
+  if (matchedPath && (matchedPath.startsWith('/api/') || matchedPath.startsWith('/public/') || matchedPath.startsWith('/controller/'))) {
+    const urlParts = req.url.split('?');
+    const query = urlParts[1] ? `?${urlParts[1]}` : '';
+    req.url = matchedPath.startsWith('/api/') ? matchedPath + query : '/api' + matchedPath + query;
+  } else if (req.url && !req.url.startsWith('/api')) {
+    // If the /api prefix was stripped by serverless rewrite rule
+    if (
+      req.url.startsWith('/public') ||
+      req.url.startsWith('/controller') ||
+      req.url.startsWith('/health') ||
+      req.url.startsWith('/ws')
+    ) {
+      req.url = '/api' + req.url;
+    }
   }
   next();
 });
@@ -51,9 +73,17 @@ const isDirectExecution = Boolean(
 );
 
 // Initialize WebSocket Manager on the HTTP server (only for non-serverless standalone servers)
-if (isDirectExecution && !process.env.VERCEL && !process.env.NOW_REGION && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+if (isDirectExecution && !isServerless) {
   wsManager.initialize(server);
 }
+
+// Fallback HTTP route for WebSocket endpoints on serverless platforms
+app.all(['/ws', '/ws/*', '/api/ws', '/api/ws/*'], (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'fallback',
+    message: 'WebSocket upgrade not supported in serverless mode. Client synchronizes via Supabase Realtime and HTTP polling.',
+  });
+});
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser(config.SECRET_KEY));
@@ -201,12 +231,12 @@ app.get('/api/controller/events', requireControllerAuth, (_req: Request, res: Re
 });
 
 // Visitor Telemetry Heartbeat
-app.post('/api/public/telemetry/heartbeat', (req: Request, res: Response) => {
-  const sessionId = req.body.session_id || req.ip || 'anonymous';
-  const page = req.body.page || '/';
+app.all('/api/public/telemetry/heartbeat', (req: Request, res: Response) => {
+  const sessionId = req.body?.session_id || req.query?.session_id || req.ip || 'anonymous';
+  const page = req.body?.page || req.query?.page || '/';
   const ip = req.ip || '';
   const ua = req.headers['user-agent'] || '';
-  supabaseRepository.recordVisitorHeartbeat(sessionId, ip, ua, page);
+  supabaseRepository.recordVisitorHeartbeat(String(sessionId), ip, ua, String(page));
   res.json({ success: true });
 });
 

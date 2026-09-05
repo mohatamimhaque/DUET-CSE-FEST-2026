@@ -168,12 +168,14 @@ export const AudienceDisplay: React.FC = () => {
 
   // Complete Theatrical Draw Start Animation Sequence (Stable reference via refs)
   const handleDrawStartSequence = useCallback((payload: any) => {
-    if (activeAnimationLockRef.current || stagePhaseRef.current !== 'IDLE') return;
+    // Only guard against double-triggering if already in active COUNTDOWN or ROLLING phase
+    if (stagePhaseRef.current === 'COUNTDOWN' || stagePhaseRef.current === 'ROLLING') return;
     activeAnimationLockRef.current = true;
 
     clearAllStageTimers();
 
     setDisplayedCandidate(null);
+    setDisplayedWinner(null);
     setIgnoredInfo(null);
 
     const candidate = payload.candidate;
@@ -186,66 +188,91 @@ export const AudienceDisplay: React.FC = () => {
     const cdSeconds = payload.countdown_seconds ?? currentEvent?.countdown_seconds ?? 5;
     const passes = payload.shuffle_passes ?? currentEvent?.shuffle_passes ?? 7;
 
+    const now = Date.now();
+    const countdownEndMs = payload.countdown_end_ms || (now + cdSeconds * 1000);
+    const rollDurationMs = payload.roll_duration_ms || 2200;
+    const revealTimeMs = payload.reveal_time_ms || (countdownEndMs + rollDurationMs);
+
     setStageSerial(serial);
     setCountdownTotal(cdSeconds);
-    setCountdownNumber(cdSeconds);
     setShufflePasses(passes);
 
-    // PHASE 1: HIGH-ENERGY COUNTDOWN STARTS IMMEDIATELY
-    setStagePhase('COUNTDOWN');
-    if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-      soundEngine.playCountdownBeep(cdSeconds);
+    const startRollingPhase = () => {
+      // PHASE 2: CYCLOTRON ROLLING SIMULATION
+      setStagePhase('ROLLING');
+      let rIdx = 0;
+      const fallbackRollingItem = candidate
+        ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'PARTICIPANT' }
+        : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
+      const activePool = realParticipantsRef.current.length > 0 ? realParticipantsRef.current : [fallbackRollingItem];
+      const poolLength = Math.max(1, activePool.length);
+      const rollTimer = setInterval(() => {
+        rIdx = (rIdx + 1) % poolLength;
+        setRollingIndex(rIdx);
+        if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+          soundEngine.playTickSound();
+        }
+      }, 60);
+      rollingIntervalRef.current = rollTimer;
+
+      // Roll until revealTimeMs (matching server clock precisely)
+      const rollRemainingMs = Math.max(600, revealTimeMs - Date.now());
+      stageSequenceTimeoutRef.current = setTimeout(() => {
+        if (rollingIntervalRef.current) {
+          clearInterval(rollingIntervalRef.current);
+          rollingIntervalRef.current = null;
+        }
+        activeAnimationLockRef.current = false;
+
+        // PHASE 3: CANDIDATE REVEAL
+        const revealedCandidate = pendingCandidateRef.current || candidate;
+        setDisplayedCandidate(revealedCandidate);
+        setStagePhase('CANDIDATE_REVEAL');
+        if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+          soundEngine.playCandidateSelectSound();
+        }
+      }, rollRemainingMs);
+    };
+
+    // Calculate initial remaining seconds based on server target timestamp
+    const initialRemainingMs = countdownEndMs - Date.now();
+    if (initialRemainingMs <= 100) {
+      // If countdown already elapsed, jump straight to rolling phase
+      startRollingPhase();
+      return;
     }
 
-    let currentSec = cdSeconds;
+    const initialSec = Math.max(1, Math.ceil(initialRemainingMs / 1000));
+    setCountdownNumber(initialSec);
+
+    // PHASE 1: HIGH-ENERGY NEON CIRCULAR COUNTDOWN (RUNS FIRST FOR ALL SERIALS)
+    setStagePhase('COUNTDOWN');
+    if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+      soundEngine.playCountdownBeep(initialSec);
+    }
+
+    let lastBeepSec = initialSec;
+    // 50ms high-resolution timer checking absolute time delta (drift-free)
     countTimerRef.current = setInterval(() => {
-      currentSec -= 1;
-      if (currentSec > 0) {
-        setCountdownNumber(currentSec);
-        if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-          soundEngine.playCountdownBeep(currentSec);
+      const remainingMs = countdownEndMs - Date.now();
+      const currentSec = Math.ceil(remainingMs / 1000);
+
+      if (remainingMs > 0) {
+        if (currentSec !== lastBeepSec && currentSec > 0) {
+          lastBeepSec = currentSec;
+          setCountdownNumber(currentSec);
+          if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
+            soundEngine.playCountdownBeep(currentSec);
+          }
         }
       } else {
         if (countTimerRef.current) {
           clearInterval(countTimerRef.current);
           countTimerRef.current = null;
         }
-
-        // PHASE 2: CYCLOTRON ROLLING SIMULATION
-        setStagePhase('ROLLING');
-        let rIdx = 0;
-        const fallbackRollingItem = candidate
-          ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'PARTICIPANT' }
-          : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
-        const activePool = realParticipantsRef.current.length > 0 ? realParticipantsRef.current : [fallbackRollingItem];
-        const poolLength = Math.max(1, activePool.length);
-        const rollTimer = setInterval(() => {
-          rIdx = (rIdx + 1) % poolLength;
-          setRollingIndex(rIdx);
-          if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-            soundEngine.playTickSound();
-          }
-        }, 60);
-        rollingIntervalRef.current = rollTimer;
-
-        // Roll for 2.2 seconds then reveal candidate selected by verified draw
-        stageSequenceTimeoutRef.current = setTimeout(() => {
-          if (rollingIntervalRef.current) {
-            clearInterval(rollingIntervalRef.current);
-            rollingIntervalRef.current = null;
-          }
-          activeAnimationLockRef.current = false;
-
-          // PHASE 3: CANDIDATE REVEAL
-          const revealedCandidate = pendingCandidateRef.current || candidate;
-          setDisplayedCandidate(revealedCandidate);
-          setStagePhase('CANDIDATE_REVEAL');
-          if (audioEnabledRef.current && currentEvent?.beep_enabled !== false) {
-            soundEngine.playCandidateSelectSound();
-          }
-        }, 2200);
+        startRollingPhase();
       }
-    }, 1000);
+    }, 50);
   }, [clearAllStageTimers]);
 
   // Initial event config & real participant pool loading
@@ -289,8 +316,14 @@ export const AudienceDisplay: React.FC = () => {
         const currentPhase = stagePhaseRef.current;
         const currentEvent = eventInfoRef.current;
 
-        // If fresh state is drawing and we are idle, kick off animation sequence
-        if (fresh.status === 'DRAWING' && !activeAnimationLockRef.current && currentPhase === 'IDLE') {
+        // If fresh state is drawing and we are not in active countdown/rolling, kick off animation sequence
+        if (
+          fresh.status === 'DRAWING' &&
+          !activeAnimationLockRef.current &&
+          currentPhase !== 'COUNTDOWN' &&
+          currentPhase !== 'ROLLING' &&
+          currentPhase !== 'CANDIDATE_REVEAL'
+        ) {
           handleDrawStartSequence({
             serial: fresh.next_serial,
             candidate: fresh.current_candidate,
@@ -327,10 +360,12 @@ export const AudienceDisplay: React.FC = () => {
           fresh.status === 'READY' &&
           currentPhase !== 'IDLE' &&
           !activeAnimationLockRef.current &&
-          currentPhase !== 'WINNER_CONFIRMED'
+          currentPhase !== 'COUNTDOWN' &&
+          currentPhase !== 'ROLLING'
         ) {
           setStagePhase('IDLE');
           setDisplayedCandidate(null);
+          setDisplayedWinner(null);
         }
 
         setDrawState((prev) => {
@@ -354,12 +389,24 @@ export const AudienceDisplay: React.FC = () => {
     // Initial check
     syncState();
 
-    // 2-second interval ensures no state is missed even on network drops
-    const intervalId = setInterval(syncState, 2000);
+    // 1.5-second interval ensures no state is missed even on network drops
+    const intervalId = setInterval(syncState, 1500);
+
+    const onWake = () => {
+      if (document.visibilityState === 'visible') {
+        syncState();
+      }
+    };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('online', onWake);
 
     return () => {
       isMounted = false;
       clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('online', onWake);
     };
   }, [handleDrawStartSequence, triggerGrandConfetti]);
 
@@ -412,6 +459,15 @@ export const AudienceDisplay: React.FC = () => {
             }
           : null
       );
+
+      // Smoothly return stage back to IDLE after celebration so audience is ready for next draw
+      stageSequenceTimeoutRef.current = setTimeout(() => {
+        if (stagePhaseRef.current === 'WINNER_CONFIRMED' && !payload.is_completed) {
+          setStagePhase('IDLE');
+          setDisplayedCandidate(null);
+          setDisplayedWinner(null);
+        }
+      }, 4500);
     } else if (type === 'CANDIDATE_IGNORED') {
       clearAllStageTimers();
       activeAnimationLockRef.current = false;
@@ -448,6 +504,55 @@ export const AudienceDisplay: React.FC = () => {
       setDrawState((prev) => (prev ? { ...prev, status: 'PAUSED' } : null));
     } else if (type === 'RESUMED') {
       setDrawState((prev) => (prev ? { ...prev, status: 'READY' } : null));
+    } else if (type === 'DRAW_STATE' || type === 'STATE_UPDATED') {
+      const state = payload;
+      if (!state) return;
+      setDrawState(state);
+      if (
+        state.status === 'DRAWING' &&
+        !activeAnimationLockRef.current &&
+        stagePhaseRef.current !== 'COUNTDOWN' &&
+        stagePhaseRef.current !== 'ROLLING' &&
+        stagePhaseRef.current !== 'CANDIDATE_REVEAL'
+      ) {
+        handleDrawStartSequence({
+          serial: state.next_serial,
+          candidate: state.current_candidate,
+          countdown_seconds: currentEvent?.countdown_seconds || 5,
+          shuffle_passes: currentEvent?.shuffle_passes || 7,
+        });
+      } else if (
+        state.status === 'WAITING_CONFIRMATION' &&
+        !activeAnimationLockRef.current &&
+        stagePhaseRef.current !== 'CANDIDATE_REVEAL' &&
+        stagePhaseRef.current !== 'COUNTDOWN' &&
+        stagePhaseRef.current !== 'ROLLING' &&
+        state.current_candidate
+      ) {
+        setDisplayedCandidate(state.current_candidate);
+        setStageSerial(state.next_serial);
+        setStagePhase('CANDIDATE_REVEAL');
+      } else if (
+        state.status === 'WINNER_CONFIRMED' &&
+        state.last_winner &&
+        stagePhaseRef.current !== 'WINNER_CONFIRMED'
+      ) {
+        setDisplayedWinner(state.last_winner);
+        setStagePhase('WINNER_CONFIRMED');
+        if (currentEvent?.confetti_enabled !== false) {
+          triggerGrandConfetti();
+        }
+      } else if (
+        state.status === 'READY' &&
+        stagePhaseRef.current !== 'IDLE' &&
+        !activeAnimationLockRef.current &&
+        stagePhaseRef.current !== 'COUNTDOWN' &&
+        stagePhaseRef.current !== 'ROLLING'
+      ) {
+        setStagePhase('IDLE');
+        setDisplayedCandidate(null);
+        setDisplayedWinner(null);
+      }
     } else if (type === 'RESET') {
       clearAllStageTimers();
       activeAnimationLockRef.current = false;

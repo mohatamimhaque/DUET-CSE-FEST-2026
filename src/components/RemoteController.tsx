@@ -58,30 +58,65 @@ export const RemoteController: React.FC = () => {
     }
   }, []);
 
-  const startRemoteCountdown = useCallback((seconds = 5) => {
+  const fetchStateRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  const startRemoteCountdown = useCallback((payloadOrSeconds: any = 5) => {
     // Guard: never restart if countdown is already actively in flight
     if (isCountingDownRef.current || remoteStagePhaseRef.current !== 'IDLE') return;
     isCountingDownRef.current = true;
     clearRemoteTimers();
-    setRemoteCountdown(seconds);
-    setRemoteCountdownTotal(seconds);
+
+    const isObj = typeof payloadOrSeconds === 'object' && payloadOrSeconds !== null;
+    const cdSeconds = isObj ? (payloadOrSeconds.countdown_seconds || 5) : (Number(payloadOrSeconds) || 5);
+    const now = Date.now();
+    const countdownEndMs = isObj && payloadOrSeconds.countdown_end_ms ? payloadOrSeconds.countdown_end_ms : (now + cdSeconds * 1000);
+    const rollDurationMs = isObj && payloadOrSeconds.roll_duration_ms ? payloadOrSeconds.roll_duration_ms : 2200;
+    const revealTimeMs = isObj && payloadOrSeconds.reveal_time_ms ? payloadOrSeconds.reveal_time_ms : (countdownEndMs + rollDurationMs);
+
+    setRemoteCountdownTotal(cdSeconds);
+
+    const startRemoteRolling = () => {
+      clearRemoteTimers();
+      isCountingDownRef.current = false;
+      setRemoteStagePhase('ROLLING');
+      remoteStagePhaseRef.current = 'ROLLING';
+      triggerHaptic([60, 40, 60]);
+
+      // Roll until revealTimeMs
+      const rollRemainingMs = Math.max(600, revealTimeMs - Date.now());
+      remoteCountIntervalRef.current = setTimeout(() => {
+        setRemoteStagePhase('IDLE');
+        remoteStagePhaseRef.current = 'IDLE';
+        fetchStateRef.current().catch(() => {});
+      }, rollRemainingMs);
+    };
+
+    const initialRemainingMs = countdownEndMs - Date.now();
+    if (initialRemainingMs <= 100) {
+      startRemoteRolling();
+      return;
+    }
+
+    const initialSec = Math.max(1, Math.ceil(initialRemainingMs / 1000));
+    setRemoteCountdown(initialSec);
     setRemoteStagePhase('COUNTDOWN');
     remoteStagePhaseRef.current = 'COUNTDOWN';
 
-    let currentSec = seconds;
+    let lastBeepSec = initialSec;
     remoteCountIntervalRef.current = setInterval(() => {
-      currentSec -= 1;
-      if (currentSec > 0) {
-        setRemoteCountdown(currentSec);
-        triggerHaptic(50);
+      const remainingMs = countdownEndMs - Date.now();
+      const currentSec = Math.ceil(remainingMs / 1000);
+
+      if (remainingMs > 0) {
+        if (currentSec !== lastBeepSec && currentSec > 0) {
+          lastBeepSec = currentSec;
+          setRemoteCountdown(currentSec);
+          triggerHaptic(50);
+        }
       } else {
-        clearRemoteTimers();
-        isCountingDownRef.current = false;
-        setRemoteStagePhase('ROLLING');
-        remoteStagePhaseRef.current = 'ROLLING';
-        triggerHaptic([60, 40, 60]);
+        startRemoteRolling();
       }
-    }, 1000);
+    }, 50);
   }, [clearRemoteTimers, triggerHaptic]);
 
   useEffect(() => {
@@ -146,6 +181,7 @@ export const RemoteController: React.FC = () => {
       setIsLoading(false);
     }
   }, [isAuthenticated]);
+  fetchStateRef.current = fetchState;
 
   // Fetch recent winners for mobile drawer
   const fetchWinners = useCallback(async () => {
@@ -158,10 +194,31 @@ export const RemoteController: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (!isAuthenticated) return;
+    fetchState();
+    fetchWinners();
+
+    // 1.5s active sync for mobile remote resilience
+    const intervalId = setInterval(() => {
       fetchState();
-      fetchWinners();
-    }
+    }, 1500);
+
+    const onWake = () => {
+      if (document.visibilityState === 'visible') {
+        fetchState();
+        fetchWinners();
+      }
+    };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('online', onWake);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('online', onWake);
+    };
   }, [isAuthenticated, fetchState, fetchWinners]);
 
   // Handle WebSocket push updates
@@ -192,10 +249,8 @@ export const RemoteController: React.FC = () => {
       }
     } else if (lastMessage.type === 'DRAW_START') {
       triggerHaptic(80);
-      if (!isCountingDownRef.current && remoteStagePhaseRef.current === 'IDLE') {
-        startRemoteCountdown(lastMessage.payload?.countdown_seconds || 5);
-      }
-      fetchState();
+      startRemoteCountdown(lastMessage.payload);
+      fetchState().catch(() => {});
     } else if (lastMessage.type === 'WINNER_CONFIRMED') {
       triggerHaptic([150, 80, 200]);
       showToast(`Winner #${lastMessage.payload?.winner?.serial} confirmed!`);
@@ -219,13 +274,6 @@ export const RemoteController: React.FC = () => {
       fetchWinners();
     }
   }, [lastMessage, fetchState, fetchWinners, triggerHaptic, showToast, startRemoteCountdown, clearRemoteTimers]);
-
-  // 2-second background state sync
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const interval = setInterval(fetchState, 2000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, fetchState]);
 
   // Login handler for mobile
   const handleLogin = async (e: React.FormEvent) => {
@@ -278,8 +326,19 @@ export const RemoteController: React.FC = () => {
     try {
       const res = await api.confirmWinner();
       showToast(res.message || 'Winner confirmed!');
-      await fetchState();
-      await fetchWinners();
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              current_candidate: null,
+              completed_winners: prev.completed_winners + 1,
+              next_serial: prev.next_serial + 1,
+              status: prev.completed_winners + 1 >= prev.total_winners ? 'COMPLETED' : 'READY',
+            }
+          : prev
+      );
+      fetchState().catch(() => {});
+      fetchWinners().catch(() => {});
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to confirm winner.');
     } finally {
@@ -298,7 +357,16 @@ export const RemoteController: React.FC = () => {
       const res = await api.ignoreCandidate(ignoreReason);
       setShowIgnoreModal(false);
       showToast(res.message || 'Candidate ignored.');
-      await fetchState();
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              current_candidate: null,
+              status: 'READY',
+            }
+          : prev
+      );
+      fetchState().catch(() => {});
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to ignore candidate.');
     } finally {

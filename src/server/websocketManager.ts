@@ -29,9 +29,15 @@ export class WebSocketManager {
         const rawPath = request.url ? new URL(request.url, `http://${host}`).pathname : '';
         const pathname = rawPath.replace(/\/+$/, '') || '/';
         
-        if (pathname === '/ws' || pathname === '/ws/audience' || pathname === '/ws/controller') {
+        const isWs =
+          pathname === '/ws' ||
+          pathname === '/api/ws' ||
+          pathname.startsWith('/ws/') ||
+          pathname.startsWith('/api/ws/');
+
+        if (isWs) {
           this.wss?.handleUpgrade(request, socket, head, (ws) => {
-            const role = pathname === '/ws/controller' ? 'controller' : 'audience';
+            const role = pathname.includes('controller') ? 'controller' : 'audience';
             this.wss?.emit('connection', ws, request, role);
           });
         }
@@ -41,8 +47,24 @@ export class WebSocketManager {
     });
 
     this.wss.on('connection', (ws: WebSocket, _request: any, role: 'audience' | 'controller' = 'audience') => {
+      // Disable Nagle's algorithm for immediate low-latency packet transmission
+      try {
+        (ws as any)._socket?.setNoDelay(true);
+      } catch {}
+
       const client: WsClient = { ws, role, isAlive: true };
       this.clients.add(client);
+
+      // Send immediate connection confirmation
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: 'CONNECTED',
+            payload: { role },
+            timestamp: new Date().toISOString(),
+          })
+        );
+      }
 
       ws.on('pong', () => {
         client.isAlive = true;
@@ -72,7 +94,7 @@ export class WebSocketManager {
       });
     });
 
-    // Ping every 15s to keep both WS and SSE connections alive across reverse proxies
+    // Ping every 10s to keep both WS and SSE connections alive across reverse proxies
     this.heartbeatInterval = setInterval(() => {
       // WS ping
       this.clients.forEach((client) => {
@@ -93,7 +115,7 @@ export class WebSocketManager {
           this.sseClients.delete(client);
         }
       });
-    }, 15000);
+    }, 10000);
   }
 
   public registerSseClient(res: Response, role: 'audience' | 'controller') {
@@ -115,23 +137,28 @@ export class WebSocketManager {
   }
 
   public broadcastAudience(type: string, payload: any) {
-    const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const packet = { id, type, payload, timestamp: new Date().toISOString() };
+    const now = Date.now();
+    const id = `msg_aud_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const packet = { id, type, payload, timestamp: new Date(now).toISOString(), server_time_ms: now };
     const message = JSON.stringify(packet);
     
-    // 1. WebSocket broadcast
+    // 1. WebSocket broadcast to audience clients
     this.clients.forEach((client) => {
-      if (client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(message);
+      if (client.role === 'audience' && client.ws.readyState === WebSocket.OPEN) {
+        try {
+          client.ws.send(message);
+        } catch {}
       }
     });
 
-    // 2. Server-Sent Events (SSE) broadcast
+    // 2. Server-Sent Events (SSE) broadcast to audience clients
     this.sseClients.forEach((client) => {
-      try {
-        client.res.write(`data: ${message}\n\n`);
-      } catch {
-        this.sseClients.delete(client);
+      if (client.role === 'audience') {
+        try {
+          client.res.write(`data: ${message}\n\n`);
+        } catch {
+          this.sseClients.delete(client);
+        }
       }
     });
 
@@ -140,18 +167,21 @@ export class WebSocketManager {
   }
 
   public broadcastController(type: string, payload: any) {
-    const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const packet = { id, type, payload, timestamp: new Date().toISOString() };
+    const now = Date.now();
+    const id = `msg_ctrl_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const packet = { id, type, payload, timestamp: new Date(now).toISOString(), server_time_ms: now };
     const message = JSON.stringify(packet);
     
-    // 1. WebSocket broadcast
+    // 1. WebSocket broadcast to controller clients
     this.clients.forEach((client) => {
       if (client.role === 'controller' && client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(message);
+        try {
+          client.ws.send(message);
+        } catch {}
       }
     });
 
-    // 2. SSE broadcast
+    // 2. SSE broadcast to controller clients
     this.sseClients.forEach((client) => {
       if (client.role === 'controller') {
         try {
@@ -167,8 +197,31 @@ export class WebSocketManager {
   }
 
   public broadcastAll(type: string, payload: any) {
-    this.broadcastAudience(type, payload);
-    this.broadcastController(type, payload);
+    const now = Date.now();
+    const id = `msg_all_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const packet = { id, type, payload, timestamp: new Date(now).toISOString(), server_time_ms: now };
+    const message = JSON.stringify(packet);
+
+    // Broadcast unified packet with single ID to all WS clients
+    this.clients.forEach((client) => {
+      if (client.ws.readyState === WebSocket.OPEN) {
+        try {
+          client.ws.send(message);
+        } catch {}
+      }
+    });
+
+    // Broadcast unified packet with single ID to all SSE clients
+    this.sseClients.forEach((client) => {
+      try {
+        client.res.write(`data: ${message}\n\n`);
+      } catch {
+        this.sseClients.delete(client);
+      }
+    });
+
+    // Single Supabase broadcast
+    broadcastSupabaseEvent(type, packet).catch(() => {});
   }
 
   public getStats() {

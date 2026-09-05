@@ -1,18 +1,22 @@
 {
-  "buildCommand": "vite build",
+  "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/ws/(.*)",
-      "destination": "/api/index.ts"
+      "destination": "/api"
     },
     {
       "source": "/banner.jpg",
       "destination": "/banner.jpg"
+    },
+    {
+      "source": "/favicon.ico",
+      "destination": "/favicon.ico"
+    },
+    {
+      "source": "/favicon.svg",
+      "destination": "/favicon.svg"
     },
     {
       "source": "/(.*)",

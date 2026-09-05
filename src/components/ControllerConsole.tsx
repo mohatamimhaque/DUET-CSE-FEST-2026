@@ -302,8 +302,8 @@ export const ControllerConsole: React.FC = () => {
 
   const startStageCountdown = useCallback(
     (payload: any) => {
-      // Guard against duplicate start / mid-sequence restart from websocket or polling
-      if (activeAnimationLockRef.current || stagePhaseRef.current !== 'IDLE') return;
+      // Guard against duplicate start if already in COUNTDOWN or ROLLING phase
+      if (stagePhaseRef.current === 'COUNTDOWN' || stagePhaseRef.current === 'ROLLING') return;
       activeAnimationLockRef.current = true;
       clearStageTimers();
 
@@ -312,30 +312,94 @@ export const ControllerConsole: React.FC = () => {
       const serial = payload?.serial || stateRef.current?.next_serial || 1;
       const cdSeconds = payload?.countdown_seconds ?? 5;
 
+      const now = Date.now();
+      const countdownEndMs = payload?.countdown_end_ms || (now + cdSeconds * 1000);
+      const rollDurationMs = payload?.roll_duration_ms || 2200;
+      const revealTimeMs = payload?.reveal_time_ms || (countdownEndMs + rollDurationMs);
+
       setStageSerial(serial);
       setCountdownTotal(cdSeconds);
-      setCountdownNumber(cdSeconds);
+
+      const startRollingPhase = () => {
+        // PHASE: CYCLOTRON ROLLING SIMULATION
+        setStagePhase('ROLLING');
+        let rIdx = 0;
+        const fallbackRollingItem = candidate
+          ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'STUDENT' }
+          : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
+        const activePool = participantsListRef.current.length > 0 ? participantsListRef.current : [fallbackRollingItem];
+        const poolLength = Math.max(1, activePool.length);
+
+        rollingIntervalRef.current = setInterval(() => {
+          rIdx = (rIdx + 1) % poolLength;
+          setRollingIndex(rIdx);
+          if (soundEnabledRef.current) {
+            try {
+              soundEngine.playTickSound();
+            } catch {
+              // Audio fallback
+            }
+          }
+        }, 60);
+
+        // Roll until revealTimeMs (matching server clock precisely)
+        const rollRemainingMs = Math.max(600, revealTimeMs - Date.now());
+        stageSequenceTimeoutRef.current = setTimeout(() => {
+          if (rollingIntervalRef.current) {
+            clearInterval(rollingIntervalRef.current);
+            rollingIntervalRef.current = null;
+          }
+          activeAnimationLockRef.current = false;
+
+          // CANDIDATE REVEAL
+          const finalCandidate = pendingCandidateRef.current || candidate;
+          setRevealedCandidate(finalCandidate);
+          setStagePhase('CANDIDATE_REVEAL');
+          if (soundEnabledRef.current) {
+            try {
+              soundEngine.playCandidateSelectSound();
+            } catch {
+              // Audio fallback
+            }
+          }
+          fetchStateRef.current();
+        }, rollRemainingMs);
+      };
+
+      const initialRemainingMs = countdownEndMs - Date.now();
+      if (initialRemainingMs <= 100) {
+        startRollingPhase();
+        return;
+      }
+
+      const initialSec = Math.max(1, Math.ceil(initialRemainingMs / 1000));
+      setCountdownNumber(initialSec);
 
       // Immediately show countdown timer (time) with beep sound
       setStagePhase('COUNTDOWN');
       if (soundEnabledRef.current) {
         try {
-          soundEngine.playCountdownBeep(cdSeconds);
+          soundEngine.playCountdownBeep(initialSec);
         } catch {
           // Audio fallback
         }
       }
 
-      let currentSec = cdSeconds;
+      let lastBeepSec = initialSec;
       countTimerRef.current = setInterval(() => {
-        currentSec -= 1;
-        if (currentSec > 0) {
-          setCountdownNumber(currentSec);
-          if (soundEnabledRef.current) {
-            try {
-              soundEngine.playCountdownBeep(currentSec);
-            } catch {
-              // Audio fallback
+        const remainingMs = countdownEndMs - Date.now();
+        const currentSec = Math.ceil(remainingMs / 1000);
+
+        if (remainingMs > 0) {
+          if (currentSec !== lastBeepSec && currentSec > 0) {
+            lastBeepSec = currentSec;
+            setCountdownNumber(currentSec);
+            if (soundEnabledRef.current) {
+              try {
+                soundEngine.playCountdownBeep(currentSec);
+              } catch {
+                // Audio fallback
+              }
             }
           }
         } else {
@@ -343,51 +407,9 @@ export const ControllerConsole: React.FC = () => {
             clearInterval(countTimerRef.current);
             countTimerRef.current = null;
           }
-
-          // PHASE: CYCLOTRON ROLLING SIMULATION
-          setStagePhase('ROLLING');
-          let rIdx = 0;
-          const fallbackRollingItem = candidate
-            ? { name: candidate.name, id: candidate.id ? `Roll: ${candidate.id}` : 'DUET CSE', type: candidate.type || 'STUDENT' }
-            : { name: 'Selecting candidate...', id: 'DUET CSE FEST 2026', type: 'DRAW' };
-          const activePool = participantsListRef.current.length > 0 ? participantsListRef.current : [fallbackRollingItem];
-          const poolLength = Math.max(1, activePool.length);
-
-          rollingIntervalRef.current = setInterval(() => {
-            rIdx = (rIdx + 1) % poolLength;
-            setRollingIndex(rIdx);
-            if (soundEnabledRef.current) {
-              try {
-                soundEngine.playTickSound();
-              } catch {
-                // Audio fallback
-              }
-            }
-          }, 60);
-
-          // Roll for 2.2 seconds then reveal candidate
-          stageSequenceTimeoutRef.current = setTimeout(() => {
-            if (rollingIntervalRef.current) {
-              clearInterval(rollingIntervalRef.current);
-              rollingIntervalRef.current = null;
-            }
-            activeAnimationLockRef.current = false;
-
-            // CANDIDATE REVEAL
-            const finalCandidate = pendingCandidateRef.current || candidate;
-            setRevealedCandidate(finalCandidate);
-            setStagePhase('CANDIDATE_REVEAL');
-            if (soundEnabledRef.current) {
-              try {
-                soundEngine.playCandidateSelectSound();
-              } catch {
-                // Audio fallback
-              }
-            }
-            fetchStateRef.current();
-          }, 2200);
+          startRollingPhase();
         }
-      }, 1000);
+      }, 50);
     },
     [clearStageTimers]
   );
@@ -440,9 +462,30 @@ export const ControllerConsole: React.FC = () => {
   }, [checkAuth]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchParticipants();
-    }
+    if (!isAuthenticated) return;
+    fetchParticipants();
+
+    // Active sync for controller console to stay in sync with mobile remotes
+    const intervalId = setInterval(() => {
+      fetchStateRef.current();
+    }, 1500);
+
+    const onWake = () => {
+      if (document.visibilityState === 'visible') {
+        fetchStateRef.current();
+        fetchParticipants();
+      }
+    };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('online', onWake);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('online', onWake);
+    };
   }, [isAuthenticated, fetchParticipants]);
 
   const handledControllerMsgSigRef = useRef<string>('');
@@ -459,12 +502,17 @@ export const ControllerConsole: React.FC = () => {
     handledControllerMsgSigRef.current = sig;
 
     if (lastMessage.type === 'DRAW_START') {
-      if (!activeAnimationLockRef.current && stagePhaseRef.current === 'IDLE') {
+      if (stagePhaseRef.current !== 'COUNTDOWN' && stagePhaseRef.current !== 'ROLLING') {
         startStageCountdownRef.current(lastMessage.payload);
       }
     } else if (lastMessage.type === 'STATE_UPDATED') {
       setState(lastMessage.payload);
-      if (lastMessage.payload?.status === 'DRAWING' && stagePhaseRef.current === 'IDLE' && !activeAnimationLockRef.current) {
+      if (
+        lastMessage.payload?.status === 'DRAWING' &&
+        stagePhaseRef.current !== 'COUNTDOWN' &&
+        stagePhaseRef.current !== 'ROLLING' &&
+        !activeAnimationLockRef.current
+      ) {
         startStageCountdownRef.current({
           serial: lastMessage.payload.next_serial,
           countdown_seconds: 5,
@@ -480,6 +528,7 @@ export const ControllerConsole: React.FC = () => {
       lastMessage.type === 'RESET'
     ) {
       clearStageTimers();
+      activeAnimationLockRef.current = false;
       setStagePhase('IDLE');
       setRevealedCandidate(null);
       silentRefreshRef.current();
@@ -572,6 +621,7 @@ export const ControllerConsole: React.FC = () => {
       e.stopPropagation();
     }
     clearStageTimers();
+    activeAnimationLockRef.current = false;
     setStagePhase('IDLE');
     setRevealedCandidate(null);
     setActionLoading(true);
@@ -585,11 +635,12 @@ export const ControllerConsole: React.FC = () => {
               current_candidate: null,
               completed_winners: prev.completed_winners + 1,
               next_serial: prev.next_serial + 1,
-              status: prev.completed_winners + 1 >= prev.total_winners ? 'COMPLETED' : 'WINNER_CONFIRMED',
+              status: prev.completed_winners + 1 >= prev.total_winners ? 'COMPLETED' : 'READY',
             }
           : prev
       );
-      await fetchState();
+      // Run background fetches asynchronously without blocking UI responsiveness
+      fetchState().catch(() => {});
       silentRefreshParticipants();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -604,6 +655,7 @@ export const ControllerConsole: React.FC = () => {
       e.stopPropagation();
     }
     clearStageTimers();
+    activeAnimationLockRef.current = false;
     setStagePhase('IDLE');
     setRevealedCandidate(null);
     setActionLoading(true);
@@ -617,11 +669,12 @@ export const ControllerConsole: React.FC = () => {
               ...prev,
               current_candidate: null,
               ignored_count: prev.ignored_count + 1,
-              status: 'IGNORED',
+              status: 'READY',
             }
           : prev
       );
-      await fetchState();
+      // Run background fetches asynchronously without blocking UI responsiveness
+      fetchState().catch(() => {});
       silentRefreshParticipants();
     } catch (err: any) {
       showToast(err.message, 'error');

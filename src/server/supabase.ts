@@ -93,12 +93,16 @@ export async function broadcastSupabaseEvent(type: string, payload: any): Promis
   if (!client) return false;
 
   try {
-    if (!realtimeChannel) {
+    if (!realtimeChannel || (realtimeChannel as any).state !== 'joined') {
       realtimeChannel = client.channel('cse_fest_raffle_events');
-      realtimeChannel.subscribe((status: string) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('[Supabase Realtime] Server broadcast channel connected.');
-        }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 2000);
+        realtimeChannel!.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
       });
     }
 

@@ -16,6 +16,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
   const wsRef = useRef<WebSocket | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
+  const lastDispatchedStateSigRef = useRef<{ sig: string; time: number }>({ sig: '', time: 0 });
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -29,17 +30,32 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
       const data: WebSocketMessage = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (!data || !data.type) return;
 
-      // Filter out internal protocol heartbeats
-      if (data.type === 'PONG' || data.type === 'PING') {
+      // Filter out internal protocol heartbeats and connection handshakes
+      if (data.type === 'PONG' || data.type === 'PING' || data.type === 'CONNECTED') {
         setIsConnected(true);
         return;
       }
 
-      // Generate unique deduplication key
+      // 1. Unique packet ID deduplication
       const key = data.id || `${data.type}_${data.timestamp}_${typeof data.payload === 'object' ? JSON.stringify(data.payload) : data.payload}`;
 
       if (seenIdsRef.current.has(key)) {
         return;
+      }
+
+      // 2. Semantic state deduplication across protocols (WS vs SSE vs Supabase CDC vs Polling)
+      // If two different transports deliver the exact same state within 1500ms, ignore redundant re-render
+      if (data.type === 'STATE_UPDATED' || data.type === 'DRAW_STATE') {
+        const payload = data.payload || {};
+        const stateSig = `${payload.status}_${payload.next_serial}_${payload.completed_winners}_${payload.current_candidate?.id || ''}_${payload.last_winner?.id || ''}`;
+        const now = Date.now();
+        if (
+          lastDispatchedStateSigRef.current.sig === stateSig &&
+          now - lastDispatchedStateSigRef.current.time < 1500
+        ) {
+          return;
+        }
+        lastDispatchedStateSigRef.current = { sig: stateSig, time: now };
       }
 
       // Keep recent cache bounded
@@ -83,6 +99,44 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
             timestamp: new Date().toISOString(),
           })
         );
+
+        // Synthesize stage events for audience ONLY if streaming connection is not active
+        if (role === 'audience') {
+          const isStreamingActive =
+            (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) ||
+            (eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN);
+
+          if (!isStreamingActive) {
+            if (data.status === 'DRAWING' && data.current_candidate) {
+              handleIncomingMessage(
+                JSON.stringify({
+                  id: `poll_draw_${sig}`,
+                  type: 'DRAW_START',
+                  payload: {
+                    serial: data.next_serial,
+                    candidate: data.current_candidate,
+                    countdown_seconds: 5,
+                    shuffle_passes: 7,
+                  },
+                  timestamp: new Date().toISOString(),
+                })
+              );
+            } else if (data.status === 'WINNER_CONFIRMED' && data.last_winner) {
+              handleIncomingMessage(
+                JSON.stringify({
+                  id: `poll_win_${sig}`,
+                  type: 'WINNER_CONFIRMED',
+                  payload: {
+                    winner: data.last_winner,
+                    completed_winners: data.completed_winners,
+                    is_completed: data.status === 'COMPLETED' || data.completed_winners >= (data.total_winners || 10),
+                  },
+                  timestamp: new Date().toISOString(),
+                })
+              );
+            }
+          }
+        }
       }
     } catch {
       // Polling network glitch
@@ -91,6 +145,12 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
 
   const connectWs = useCallback(() => {
     if (typeof window === 'undefined' || isDestroyedRef.current || wsDisabledRef.current) return;
+
+    // Detect serverless deployment domains that do not support persistent custom WebSockets
+    const hostname = window.location.hostname;
+    if (hostname.includes('vercel.app')) {
+      return;
+    }
 
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -107,7 +167,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
 
-        // Periodic application-level heartbeat
+        // Periodic application-level heartbeat (8s)
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -115,7 +175,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
               ws.send(JSON.stringify({ type: 'PING' }));
             } catch {}
           }
-        }, 20000);
+        }, 8000);
       };
 
       ws.onmessage = (event) => {
@@ -126,19 +186,16 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         if (isDestroyedRef.current) return;
 
-        // Auto-reconnect with exponential backoff (capped to prevent endless errors on serverless)
-        if (reconnectAttemptsRef.current < 2) {
-          const delay = Math.min(4000, 1000 * Math.pow(1.5, reconnectAttemptsRef.current));
-          reconnectAttemptsRef.current += 1;
-          
-          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = setTimeout(() => {
+        // Auto-reconnect with snappy delay (250ms to 2.5s)
+        const delay = Math.min(2500, 250 + reconnectAttemptsRef.current * 350);
+        reconnectAttemptsRef.current += 1;
+        
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (!isDestroyedRef.current) {
             connectWs();
-          }, delay);
-        } else {
-          // Permanently disable WS for this session and rely on HTTP polling sync
-          wsDisabledRef.current = true;
-        }
+          }
+        }, delay);
 
         // If SSE is not open, show disconnected
         if (!eventSourceRef.current || eventSourceRef.current.readyState === EventSource.CLOSED) {
@@ -152,8 +209,7 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
         } catch {}
       };
     } catch {
-      // WS error fallback to SSE & polling
-      wsDisabledRef.current = true;
+      // WS error fallback
     }
   }, [role, handleIncomingMessage]);
 
@@ -205,13 +261,51 @@ export function useWebSocket(role: 'audience' | 'controller' = 'audience') {
     connectWs();
     connectSse();
 
-    // 3. Fallback heartbeat polling synchronization
-    pollState();
-    pollIntervalRef.current = setInterval(pollState, 1500);
+    // 3. Fallback heartbeat polling synchronization with adaptive intervals (6s when streaming, 1.2s on fallback)
+    const scheduleNextPoll = () => {
+      if (pollIntervalRef.current) clearTimeout(pollIntervalRef.current);
+      if (isDestroyedRef.current) return;
+
+      const isLive =
+        (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) ||
+        (eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN);
+
+      const nextDelay = isLive ? 6000 : 1200;
+      pollIntervalRef.current = setTimeout(() => {
+        pollState().finally(() => {
+          scheduleNextPoll();
+        });
+      }, nextDelay);
+    };
+
+    pollState().finally(() => {
+      scheduleNextPoll();
+    });
+
+    // 4. Mobile device wake-up / foreground resume listeners
+    const handleWakeUp = () => {
+      if (document.visibilityState === 'visible') {
+        pollState();
+        if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+          reconnectAttemptsRef.current = 0;
+          connectWs();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleWakeUp);
+    window.addEventListener('focus', handleWakeUp);
+    window.addEventListener('online', handleWakeUp);
+    window.addEventListener('pageshow', handleWakeUp);
 
     return () => {
       isDestroyedRef.current = true;
       unsubscribeSupabase();
+
+      document.removeEventListener('visibilitychange', handleWakeUp);
+      window.removeEventListener('focus', handleWakeUp);
+      window.removeEventListener('online', handleWakeUp);
+      window.removeEventListener('pageshow', handleWakeUp);
 
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
