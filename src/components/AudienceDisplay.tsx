@@ -361,11 +361,14 @@ export const AudienceDisplay: React.FC = () => {
           currentPhase !== 'IDLE' &&
           !activeAnimationLockRef.current &&
           currentPhase !== 'COUNTDOWN' &&
-          currentPhase !== 'ROLLING'
+          currentPhase !== 'ROLLING' &&
+          currentPhase !== 'WINNER_CONFIRMED' &&
+          currentPhase !== 'CANDIDATE_IGNORED'
         ) {
           setStagePhase('IDLE');
           setDisplayedCandidate(null);
           setDisplayedWinner(null);
+          setIgnoredInfo(null);
         }
 
         setDrawState((prev) => {
@@ -433,9 +436,13 @@ export const AudienceDisplay: React.FC = () => {
       }
     } else if (type === 'WINNER_CONFIRMED') {
       clearAllStageTimers();
-      activeAnimationLockRef.current = false;
+      // Lock active animation so background state polls do not prematurely wipe out the celebration
+      activeAnimationLockRef.current = true;
 
+      setDisplayedCandidate(null);
+      setIgnoredInfo(null);
       setDisplayedWinner(payload.winner);
+      setStageSerial(payload.winner?.serial || stageSerialRef.current);
       setStagePhase('WINNER_CONFIRMED');
 
       // Continuous Multi-Stage Confetti Celebration
@@ -460,18 +467,25 @@ export const AudienceDisplay: React.FC = () => {
           : null
       );
 
-      // Smoothly return stage back to IDLE after celebration so audience is ready for next draw
+      // Keep official winner card proudly on screen for celebration (or until next draw is initiated by controller)
       stageSequenceTimeoutRef.current = setTimeout(() => {
-        if (stagePhaseRef.current === 'WINNER_CONFIRMED' && !payload.is_completed) {
-          setStagePhase('IDLE');
-          setDisplayedCandidate(null);
-          setDisplayedWinner(null);
+        activeAnimationLockRef.current = false;
+        if (stagePhaseRef.current === 'WINNER_CONFIRMED') {
+          if (payload.is_completed) {
+            setStagePhase('COMPLETED');
+          } else {
+            setStagePhase('IDLE');
+            setDisplayedWinner(null);
+          }
         }
-      }, 4500);
+      }, 12000);
     } else if (type === 'CANDIDATE_IGNORED') {
       clearAllStageTimers();
-      activeAnimationLockRef.current = false;
+      // Lock active animation so background state polls do not prematurely wipe out absent notice
+      activeAnimationLockRef.current = true;
 
+      setDisplayedCandidate(null);
+      setDisplayedWinner(null);
       setIgnoredInfo({
         name: payload.name,
         reason: payload.reason,
@@ -483,12 +497,14 @@ export const AudienceDisplay: React.FC = () => {
         soundEngine.playIgnoreSound();
       }
 
-      // Smoothly return back to ready state after 3.2 seconds
-      setTimeout(() => {
-        setStagePhase('IDLE');
-        setDisplayedCandidate(null);
-        setIgnoredInfo(null);
-      }, 3200);
+      // Display candidate absent notice for 5.5 seconds (or until next draw is initiated)
+      stageSequenceTimeoutRef.current = setTimeout(() => {
+        activeAnimationLockRef.current = false;
+        if (stagePhaseRef.current === 'CANDIDATE_IGNORED') {
+          setStagePhase('IDLE');
+          setIgnoredInfo(null);
+        }
+      }, 5500);
 
       setDrawState((prev) =>
         prev
@@ -547,11 +563,14 @@ export const AudienceDisplay: React.FC = () => {
         stagePhaseRef.current !== 'IDLE' &&
         !activeAnimationLockRef.current &&
         stagePhaseRef.current !== 'COUNTDOWN' &&
-        stagePhaseRef.current !== 'ROLLING'
+        stagePhaseRef.current !== 'ROLLING' &&
+        stagePhaseRef.current !== 'WINNER_CONFIRMED' &&
+        stagePhaseRef.current !== 'CANDIDATE_IGNORED'
       ) {
         setStagePhase('IDLE');
         setDisplayedCandidate(null);
         setDisplayedWinner(null);
+        setIgnoredInfo(null);
       }
     } else if (type === 'RESET') {
       clearAllStageTimers();
