@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="16" fill="#020617"/>
+  <rect x="1" y="1" width="62" height="62" rx="15" stroke="url(#borderGlow)" stroke-width="2"/>
+  <defs>
+    <linearGradient id="borderGlow" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#06b6d4"/>
+      <stop offset="0.5" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="cubeFill" x1="16" y1="14" x2="48" y2="50" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#06b6d4"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- Cyber Dice / Fest Logo Icon -->
+  <path d="M32 12L48 21.5V40.5L32 50L16 40.5V21.5L32 12Z" fill="url(#cubeFill)" opacity="0.9"/>
+  <path d="M32 12L48 21.5L32 31L16 21.5L32 12Z" fill="#38bdf8"/>
+  <path d="M32 31V50L16 40.5V21.5L32 31Z" fill="#0284c7" opacity="0.8"/>
+  <path d="M32 31L48 21.5V40.5L32 50V31Z" fill="#4f46e5" opacity="0.9"/>
+  <!-- Central Tech Core Star -->
+  <circle cx="32" cy="31" r="3.5" fill="#ffffff"/>
+</svg>

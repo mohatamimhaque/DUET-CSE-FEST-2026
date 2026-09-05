@@ -1,0 +1,6 @@
+{
+  "name": "DUET CSE Fest 2026 Raffle Draw",
+  "description": "Event-grade, highly secure and recoverable live raffle draw system with audience projector display and controller console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
