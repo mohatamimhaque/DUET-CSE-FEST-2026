@@ -6,6 +6,7 @@ import {
   SessionState,
   PageAccessSettings,
   RegistrationRequest,
+  ParticipantEditRequest,
   VisitorAnalytics,
 } from '../types.ts';
 
@@ -15,6 +16,7 @@ let inMemoryParticipants: Participant[] = [];
 let inMemoryResults: WinnerResult[] = [];
 let inMemoryIgnored: IgnoredCandidate[] = [];
 let inMemoryRegistrations: RegistrationRequest[] = [];
+let inMemoryEditRequests: ParticipantEditRequest[] = [];
 let inMemorySession: SessionState = {
   event: 'DUET CSE Fest 2026',
   status: 'READY',
@@ -32,6 +34,8 @@ let inMemoryPageAccess: PageAccessSettings = {
   health: true,
   results: true,
   self_registration: true,
+  allow_participant_edit: true,
+  allowed_edit_series: ['20', '21', '22', '23', '24'],
   restriction_message: 'This page is temporarily restricted by the event administrator. Please stay tuned.',
 };
 
@@ -538,17 +542,31 @@ export const supabaseRepository = {
     try {
       const { data } = await client
         .from('cse_fest_2026_raffle_sessions')
-        .select('access_audience_enabled, access_participants_enabled, access_health_enabled, access_results_enabled, access_restriction_message, allow_self_registration')
+        .select('*')
         .eq('id', 'default_session')
         .maybeSingle();
 
       if (data) {
+        let parsedSeries = inMemoryPageAccess.allowed_edit_series ?? ['20', '21', '22', '23', '24'];
+        if (Array.isArray(data.allowed_edit_series)) {
+          parsedSeries = data.allowed_edit_series;
+        } else if (typeof data.allowed_edit_series === 'string') {
+          try {
+            const parsed = JSON.parse(data.allowed_edit_series);
+            if (Array.isArray(parsed)) parsedSeries = parsed;
+          } catch {
+            parsedSeries = data.allowed_edit_series.split(',').map((s: string) => s.trim()).filter(Boolean);
+          }
+        }
+
         inMemoryPageAccess = {
           audience: data.access_audience_enabled ?? true,
           participants: data.access_participants_enabled ?? true,
           health: data.access_health_enabled ?? true,
           results: data.access_results_enabled ?? true,
           self_registration: data.allow_self_registration ?? inMemoryPageAccess.self_registration ?? true,
+          allow_participant_edit: data.allow_participant_edit ?? inMemoryPageAccess.allow_participant_edit ?? true,
+          allowed_edit_series: parsedSeries,
           restriction_message:
             data.access_restriction_message ||
             'This page is temporarily restricted by the event administrator. Please stay tuned.',
@@ -568,21 +586,36 @@ export const supabaseRepository = {
 
     const client = getSupabaseClient();
     if (client) {
+      const basePayload = {
+        access_audience_enabled: inMemoryPageAccess.audience,
+        access_participants_enabled: inMemoryPageAccess.participants,
+        access_health_enabled: inMemoryPageAccess.health,
+        access_results_enabled: inMemoryPageAccess.results,
+        access_restriction_message: inMemoryPageAccess.restriction_message,
+        allow_self_registration: inMemoryPageAccess.self_registration !== false,
+        updated_at: new Date().toISOString(),
+      };
+
       try {
+        // Attempt full update including participant edit options
         await client
           .from('cse_fest_2026_raffle_sessions')
           .update({
-            access_audience_enabled: inMemoryPageAccess.audience,
-            access_participants_enabled: inMemoryPageAccess.participants,
-            access_health_enabled: inMemoryPageAccess.health,
-            access_results_enabled: inMemoryPageAccess.results,
-            access_restriction_message: inMemoryPageAccess.restriction_message,
-            allow_self_registration: inMemoryPageAccess.self_registration !== false,
-            updated_at: new Date().toISOString(),
+            ...basePayload,
+            allow_participant_edit: inMemoryPageAccess.allow_participant_edit !== false,
+            allowed_edit_series: inMemoryPageAccess.allowed_edit_series || ['20', '21', '22', '23', '24'],
           })
           .eq('id', 'default_session');
       } catch (err: any) {
-        console.error('[SupabaseRepo] Failed to update page access settings:', err.message);
+        // Graceful fallback if allow_participant_edit columns not yet added to remote table
+        try {
+          await client
+            .from('cse_fest_2026_raffle_sessions')
+            .update(basePayload)
+            .eq('id', 'default_session');
+        } catch (innerErr: any) {
+          console.warn('[SupabaseRepo] Failed to update session settings in Supabase:', innerErr.message);
+        }
       }
     }
 
@@ -819,6 +852,387 @@ export const supabaseRepository = {
   },
 
   /**
+   * Participant Name Edit & Verification Flow
+   */
+  async createEditRequest(data: {
+    student_id: string;
+    current_name?: string;
+    requested_name: string;
+    reason?: string;
+  }): Promise<{ success: boolean; message: string; id?: string }> {
+    const pageAccess = await this.getPageAccessSettings();
+    if (pageAccess.allow_participant_edit === false) {
+      return {
+        success: false,
+        message: 'Student name correction requests are currently closed by the event controller.',
+      };
+    }
+
+    const studentId = String(data.student_id || '').trim();
+    const reqName = String(data.requested_name || '').trim();
+    const currName = data.current_name ? String(data.current_name).trim() : '';
+
+    if (!studentId) {
+      return { success: false, message: 'Student ID / Roll number is required.' };
+    }
+    if (!reqName) {
+      return { success: false, message: 'Corrected name is required.' };
+    }
+    if (reqName.length < 2) {
+      return { success: false, message: 'Name must be at least 2 characters.' };
+    }
+
+    // Lookup participant in official pool
+    const allParticipants = await this.getParticipants();
+    const participant = allParticipants.find(
+      (p) =>
+        (p.id && p.id.trim().toLowerCase() === studentId.toLowerCase()) ||
+        (currName && p.name.trim().toLowerCase() === currName.toLowerCase())
+    );
+
+    if (!participant) {
+      return {
+        success: false,
+        message: `Student with ID / Roll "${studentId}" was not found in the official participant directory.`,
+      };
+    }
+
+    // Verify participant type is strictly student
+    if (participant.type.toLowerCase() !== 'student') {
+      return {
+        success: false,
+        message: 'Name edits are restricted exclusively to students. Faculty and guests cannot request name edits.',
+      };
+    }
+
+    // Extract series from first 2 digits of student_id
+    const rawId = (participant.id || studentId).trim();
+    const seriesMatch = rawId.match(/^\d{2}/);
+    const series = seriesMatch ? seriesMatch[0] : rawId.slice(0, 2);
+
+    // Verify series permissions set by controller
+    const allowedSeries = pageAccess.allowed_edit_series || [];
+    const isAllAllowed =
+      allowedSeries.length === 0 || allowedSeries.includes('*') || allowedSeries.includes('all');
+    if (!isAllAllowed && !allowedSeries.includes(series)) {
+      return {
+        success: false,
+        message: `Name editing is not currently permitted for Series "${series}". Allowed series: ${allowedSeries.join(', ')}. Please contact the event committee.`,
+      };
+    }
+
+    if (participant.name.trim().toLowerCase() === reqName.toLowerCase()) {
+      return {
+        success: false,
+        message: 'The requested name is identical to the current registered name.',
+      };
+    }
+
+    // Check if an edit request is already pending for this student
+    const existing = await this.getEditRequests();
+    const hasPending = existing.some(
+      (r) =>
+        r.status === 'pending' &&
+        ((r.student_id && r.student_id.toLowerCase() === studentId.toLowerCase()) ||
+          (r.current_name && r.current_name.toLowerCase() === participant.name.toLowerCase()))
+    );
+
+    if (hasPending) {
+      return {
+        success: false,
+        message: `A name edit request for Student ID "${studentId}" is already pending review by the event controller.`,
+      };
+    }
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data: inserted, error } = await client
+          .from('cse_fest_2026_participant_edit_requests')
+          .insert({
+            external_id: participant.id || studentId,
+            current_name: participant.name,
+            requested_name: reqName,
+            type: 'student',
+            series: series,
+            reason: data.reason?.trim() || null,
+            status: 'pending',
+          })
+          .select('id')
+          .single();
+
+        if (!error && inserted?.id) {
+          await this.appendAudit('PARTICIPANT_EDIT_REQUESTED', {
+            id: inserted.id,
+            student_id: participant.id || studentId,
+            series,
+            current_name: participant.name,
+            requested_name: reqName,
+          });
+          return {
+            success: true,
+            message: `Your name correction request for "${reqName}" has been submitted for controller verification.`,
+            id: inserted.id,
+          };
+        }
+      } catch (err: any) {
+        console.warn(
+          '[SupabaseRepo] Failed to insert to cse_fest_2026_participant_edit_requests, using in-memory fallback:',
+          err.message
+        );
+      }
+    }
+
+    // In-memory fallback
+    const newReq: ParticipantEditRequest = {
+      id: `edit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      participant_id: participant.id || studentId,
+      student_id: participant.id || studentId,
+      current_name: participant.name,
+      requested_name: reqName,
+      type: 'student',
+      series: series,
+      reason: data.reason?.trim() || null,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    };
+    inMemoryEditRequests.unshift(newReq);
+
+    await this.appendAudit('PARTICIPANT_EDIT_REQUESTED', {
+      id: newReq.id,
+      student_id: newReq.student_id,
+      series,
+      current_name: newReq.current_name,
+      requested_name: reqName,
+    });
+
+    return {
+      success: true,
+      message: `Your name correction request for "${reqName}" has been submitted for controller verification.`,
+      id: newReq.id,
+    };
+  },
+
+  async getEditRequests(): Promise<ParticipantEditRequest[]> {
+    const client = getSupabaseClient();
+    if (!client) {
+      return inMemoryEditRequests;
+    }
+
+    try {
+      const { data, error } = await client
+        .from('cse_fest_2026_participant_edit_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error || !data) {
+        return inMemoryEditRequests;
+      }
+
+      return data.map((row: any) => ({
+        id: row.id,
+        participant_id: row.external_id,
+        student_id: row.external_id,
+        current_name: row.current_name,
+        requested_name: row.requested_name,
+        type: row.type || 'student',
+        series: row.series,
+        reason: row.reason,
+        status: row.status,
+        reviewed_by: row.reviewed_by,
+        reviewed_at: row.reviewed_at,
+        review_notes: row.review_notes,
+        created_at: row.created_at,
+      }));
+    } catch {
+      return inMemoryEditRequests;
+    }
+  },
+
+  async reviewEditRequest(
+    requestId: string,
+    action: 'approve' | 'reject',
+    reviewerName: string = 'Controller',
+    notes?: string
+  ): Promise<{ success: boolean; message: string }> {
+    const client = getSupabaseClient();
+    let request: ParticipantEditRequest | null = null;
+
+    if (client) {
+      try {
+        const { data } = await client
+          .from('cse_fest_2026_participant_edit_requests')
+          .select('*')
+          .eq('id', requestId)
+          .maybeSingle();
+
+        if (data) {
+          request = {
+            id: data.id,
+            participant_id: data.external_id,
+            student_id: data.external_id,
+            current_name: data.current_name,
+            requested_name: data.requested_name,
+            type: data.type,
+            series: data.series,
+            reason: data.reason,
+            status: data.status,
+            reviewed_by: data.reviewed_by,
+            reviewed_at: data.reviewed_at,
+            review_notes: data.review_notes,
+            created_at: data.created_at,
+          };
+        }
+      } catch {}
+    }
+
+    if (!request) {
+      request = inMemoryEditRequests.find((r) => r.id === requestId) || null;
+    }
+
+    if (!request) {
+      return { success: false, message: 'Edit request not found.' };
+    }
+
+    if (request.status !== 'pending') {
+      return { success: false, message: `Request has already been ${request.status}.` };
+    }
+
+    const now = new Date().toISOString();
+
+    if (action === 'approve') {
+      // 1. Update official table cse_fest_2026_participants
+      if (client) {
+        try {
+          if (request.student_id) {
+            await client
+              .from('cse_fest_2026_participants')
+              .update({
+                name: request.requested_name,
+                updated_at: now,
+              })
+              .ilike('external_id', request.student_id.trim());
+          } else {
+            await client
+              .from('cse_fest_2026_participants')
+              .update({
+                name: request.requested_name,
+                updated_at: now,
+              })
+              .ilike('name', request.current_name.trim());
+          }
+
+          // Also update winner_results and ignored_candidates if this participant was already drawn
+          if (request.student_id) {
+            await client
+              .from('cse_fest_2026_winner_results')
+              .update({ name: request.requested_name })
+              .ilike('external_id', request.student_id.trim());
+            await client
+              .from('cse_fest_2026_ignored_candidates')
+              .update({ name: request.requested_name })
+              .ilike('external_id', request.student_id.trim());
+          }
+        } catch (err: any) {
+          console.error('[SupabaseRepo] Failed to update participant name in Supabase:', err.message);
+        }
+      }
+
+      // Update in-memory pool
+      const idx = inMemoryParticipants.findIndex((p) => {
+        if (request?.student_id && p.id) {
+          return p.id.trim().toLowerCase() === request.student_id.trim().toLowerCase();
+        }
+        return p.name.trim().toLowerCase() === request?.current_name.trim().toLowerCase();
+      });
+      if (idx !== -1) {
+        inMemoryParticipants[idx].name = request.requested_name;
+      }
+
+      // Update in-memory winners/ignored
+      inMemoryResults.forEach((w) => {
+        if (request?.student_id && w.id?.trim().toLowerCase() === request.student_id.trim().toLowerCase()) {
+          w.name = request.requested_name;
+        }
+      });
+      inMemoryIgnored.forEach((i) => {
+        if (request?.student_id && i.id?.trim().toLowerCase() === request.student_id.trim().toLowerCase()) {
+          i.name = request.requested_name;
+        }
+      });
+    }
+
+    // Mark edit request as approved or rejected
+    if (client) {
+      try {
+        await client
+          .from('cse_fest_2026_participant_edit_requests')
+          .update({
+            status: action === 'approve' ? 'approved' : 'rejected',
+            reviewed_by: reviewerName,
+            reviewed_at: now,
+            review_notes: notes || null,
+          })
+          .eq('id', requestId);
+      } catch (err: any) {
+        console.warn('[SupabaseRepo] Failed to update edit request status in Supabase:', err.message);
+      }
+    }
+
+    // Update in-memory edit request
+    const memReq = inMemoryEditRequests.find((r) => r.id === requestId);
+    if (memReq) {
+      memReq.status = action === 'approve' ? 'approved' : 'rejected';
+      memReq.reviewed_by = reviewerName;
+      memReq.reviewed_at = now;
+      memReq.review_notes = notes || null;
+    }
+
+    await this.appendAudit(
+      action === 'approve' ? 'PARTICIPANT_EDIT_APPROVED' : 'PARTICIPANT_EDIT_REJECTED',
+      {
+        id: requestId,
+        student_id: request.student_id,
+        current_name: request.current_name,
+        requested_name: request.requested_name,
+        reviewer: reviewerName,
+        notes,
+      }
+    );
+
+    return {
+      success: true,
+      message:
+        action === 'approve'
+          ? `Approved name change for Student ID "${request.student_id}". Participant name updated from "${request.current_name}" to "${request.requested_name}".`
+          : `Rejected name change for Student ID "${request.student_id}". Official participant record was not modified.`,
+    };
+  },
+
+  async batchReviewEditRequests(
+    action: 'approve' | 'reject',
+    reviewerName: string = 'Controller',
+    requestIds?: string[]
+  ): Promise<{ success: boolean; count: number; message: string }> {
+    const all = await this.getEditRequests();
+    const targets = all.filter(
+      (r) => r.status === 'pending' && (!requestIds || requestIds.includes(r.id))
+    );
+
+    let count = 0;
+    for (const req of targets) {
+      await this.reviewEditRequest(req.id, action, reviewerName, `Batch ${action}d by controller`);
+      count++;
+    }
+
+    return {
+      success: true,
+      count,
+      message: `Successfully ${action}d ${count} name edit request(s).`,
+    };
+  },
+
+  /**
    * Visitor Telemetry & Audience Tracking
    */
   recordVisitorHeartbeat(sessionId: string, ip: string, userAgent: string, page: string): void {
@@ -879,6 +1293,7 @@ export const supabaseRepository = {
           client.from('cse_fest_2026_ignored_candidates').delete().not('id', 'is', null),
           client.from('cse_fest_2026_participants').delete().not('id', 'is', null),
           client.from('cse_fest_2026_participant_registration_requests').delete().not('id', 'is', null),
+          client.from('cse_fest_2026_participant_edit_requests').delete().not('id', 'is', null),
           client.from('cse_fest_2026_audit_logs').delete().gte('id', 0),
           client.from('cse_fest_2026_audience_timeline_snapshots').delete().gte('serial', 0),
         ]);
@@ -904,6 +1319,7 @@ export const supabaseRepository = {
     inMemoryResults = [];
     inMemoryIgnored = [];
     inMemoryRegistrations = [];
+    inMemoryEditRequests = [];
     inMemorySession = {
       event: 'DUET CSE Fest 2026',
       status: 'READY',

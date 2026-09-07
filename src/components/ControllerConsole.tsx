@@ -5,7 +5,7 @@ import { DuetFestIntro } from './DuetFestIntro.tsx';
 import { soundEngine } from '../utils/audio.ts';
 import { useWebSocket } from '../hooks/useWebSocket.ts';
 import { useTheme } from '../hooks/useTheme.ts';
-import { ControllerState, Participant, RegistrationRequest } from '../types.ts';
+import { ControllerState, Participant, RegistrationRequest, ParticipantEditRequest } from '../types.ts';
 import { api, getStoredToken } from '../services/api.ts';
 
 type ControllerStagePhase = 'IDLE' | 'STAGE_INTRO' | 'COUNTDOWN' | 'ROLLING' | 'CANDIDATE_REVEAL';
@@ -81,6 +81,7 @@ export const ControllerConsole: React.FC = () => {
 
   // Registration Review & Verification Center State
   const [showVerifyModal, setShowVerifyModal] = useState<boolean>(false);
+  const [verifyTab, setVerifyTab] = useState<'registrations' | 'edits'>('registrations');
   const [registrations, setRegistrations] = useState<RegistrationRequest[]>([]);
   const [regFilterStatus, setRegFilterStatus] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [regFilterType, setRegFilterType] = useState<string>('all');
@@ -89,6 +90,16 @@ export const ControllerConsole: React.FC = () => {
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [batchReviewing, setBatchReviewing] = useState<boolean>(false);
   const [verifyingParticipantKey, setVerifyingParticipantKey] = useState<string | null>(null);
+
+  // Student Name Edit Requests State
+  const [editRequests, setEditRequests] = useState<ParticipantEditRequest[]>([]);
+  const [editFilterStatus, setEditFilterStatus] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [editFilterSeries, setEditFilterSeries] = useState<string>('all');
+  const [editSearchQuery, setEditSearchQuery] = useState<string>('');
+  const [loadingEditRequests, setLoadingEditRequests] = useState<boolean>(false);
+  const [reviewingEditId, setReviewingEditId] = useState<string | null>(null);
+  const [batchReviewingEdits, setBatchReviewingEdits] = useState<boolean>(false);
+  const [newCustomSeries, setNewCustomSeries] = useState<string>('');
 
   // Participant Import State
   const [importJsonText, setImportJsonText] = useState<string>('');
@@ -155,6 +166,120 @@ export const ControllerConsole: React.FC = () => {
     } finally {
       setBatchReviewing(false);
     }
+  };
+
+  const fetchEditRequests = async () => {
+    setLoadingEditRequests(true);
+    try {
+      const res = await api.getParticipantEditRequests();
+      if (res.requests) {
+        setEditRequests(res.requests);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setLoadingEditRequests(false);
+    }
+  };
+
+  const handleReviewEditRequest = async (id: string, action: 'approve' | 'reject', notes?: string) => {
+    setReviewingEditId(id);
+    try {
+      const res = await api.reviewParticipantEditRequest(id, action, notes);
+      showToast(res.message, 'success');
+      await fetchEditRequests();
+      await fetchState();
+      fetchParticipants();
+    } catch (err: any) {
+      showToast(err.message || `Failed to ${action} name edit request`, 'error');
+    } finally {
+      setReviewingEditId(null);
+    }
+  };
+
+  const handleBatchReviewEditRequests = async (action: 'approve' | 'reject') => {
+    const pendingIds = editRequests.filter((r) => r.status === 'pending').map((r) => r.id);
+    if (pendingIds.length === 0) {
+      showToast('No pending name edit requests to process.', 'info');
+      return;
+    }
+    setBatchReviewingEdits(true);
+    try {
+      const res = await api.batchReviewParticipantEditRequests(action, pendingIds);
+      showToast(res.message, 'success');
+      await fetchEditRequests();
+      await fetchState();
+      fetchParticipants();
+    } catch (err: any) {
+      showToast(err.message || `Failed to batch ${action} name edit requests`, 'error');
+    } finally {
+      setBatchReviewingEdits(false);
+    }
+  };
+
+  const handleToggleParticipantEditSetting = async () => {
+    const nextAllowed = !pageAccess.allow_participant_edit;
+    const updated = {
+      ...pageAccess,
+      allow_participant_edit: nextAllowed,
+    };
+    setSavingAccess(true);
+    try {
+      const res = await api.updatePageAccess(updated);
+      setPageAccess(res.settings);
+      showToast(
+        `Student name correction is now ${nextAllowed ? 'ENABLED' : 'DISABLED'} on /participants.`,
+        nextAllowed ? 'success' : 'info'
+      );
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setSavingAccess(false);
+    }
+  };
+
+  const handleToggleSeriesPermission = async (seriesCode: string) => {
+    const current = Array.isArray(pageAccess.allowed_edit_series)
+      ? [...pageAccess.allowed_edit_series]
+      : ['20', '21', '22', '23', '24'];
+
+    let updatedSeries: string[];
+    if (seriesCode === '*' || seriesCode.toLowerCase() === 'all') {
+      updatedSeries = current.includes('*') ? ['20', '21', '22', '23', '24'] : ['*'];
+    } else {
+      const clean = seriesCode.trim();
+      const noWildcard = current.filter((s) => s !== '*');
+      if (noWildcard.includes(clean)) {
+        updatedSeries = noWildcard.filter((s) => s !== clean);
+      } else {
+        updatedSeries = [...noWildcard, clean];
+      }
+    }
+
+    setSavingAccess(true);
+    try {
+      const updated = {
+        ...pageAccess,
+        allowed_edit_series: updatedSeries,
+      };
+      const res = await api.updatePageAccess(updated);
+      setPageAccess(res.settings);
+      showToast(
+        `Allowed edit series updated: ${updatedSeries.includes('*') ? 'All (*)' : updatedSeries.join(', ') || 'None'}`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setSavingAccess(false);
+    }
+  };
+
+  const handleAddCustomSeries = async () => {
+    const clean = newCustomSeries.trim();
+    if (!clean) return;
+    setNewCustomSeries('');
+    await handleToggleSeriesPermission(clean);
   };
 
   const handleVerifyParticipantEligibility = async (
@@ -264,6 +389,7 @@ export const ControllerConsole: React.FC = () => {
         fetchState();
         fetchPageAccess();
         fetchRegistrations();
+        fetchEditRequests();
       }
     } catch {
       setIsAuthenticated(false);
@@ -547,6 +673,9 @@ export const ControllerConsole: React.FC = () => {
       setIsAuthenticated(true);
       fetchState();
       fetchParticipants();
+      fetchPageAccess();
+      fetchRegistrations();
+      fetchEditRequests();
     } catch (err: any) {
       setLoginError(err.message || 'Login failed');
     } finally {
@@ -893,16 +1022,19 @@ export const ControllerConsole: React.FC = () => {
             id="btn-open-verify-modal"
             onClick={() => {
               fetchRegistrations();
+              fetchEditRequests();
               setShowVerifyModal(true);
             }}
             className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 text-xs font-bold flex items-center gap-1.5 shadow-sm transition relative"
-            title="Review and verify participant self-registration requests"
+            title="Review and verify participant registrations and student name corrections"
           >
             <MaterialIcon name="how_to_reg" size={16} />
             <span>Verification Queue</span>
-            {registrations.filter((r) => r.status === 'pending').length > 0 && (
+            {(registrations.filter((r) => r.status === 'pending').length +
+              editRequests.filter((r) => r.status === 'pending').length) > 0 && (
               <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-pink-500 text-white animate-pulse">
-                {registrations.filter((r) => r.status === 'pending').length}
+                {registrations.filter((r) => r.status === 'pending').length +
+                  editRequests.filter((r) => r.status === 'pending').length}
               </span>
             )}
           </button>
@@ -1799,6 +1931,141 @@ export const ControllerConsole: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Student Name Correction & Series Restriction Manager */}
+        <div className="pt-5 border-t border-slate-800 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <MaterialIcon name="badge" size={20} className="text-cyan-400" />
+                <h4 className="text-sm font-bold text-white">Student Name Correction & Series Filter</h4>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
+                    pageAccess.allow_participant_edit
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                  }`}
+                >
+                  {pageAccess.allow_participant_edit ? 'ENABLED' : 'DISABLED'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                Allow student participants to submit spelling/name corrections from <code>/participants</code>.
+                Restrictions are enforced using the first 2 digits of the student ID (e.g. <code>2303042</code> = Series <code>23</code>).
+                Faculty and guests cannot submit edits. All edits require controller verification before updating the official table.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={savingAccess}
+              onClick={handleToggleParticipantEditSetting}
+              className={`px-4 py-2 rounded-xl text-xs font-bold font-mono transition flex items-center justify-center gap-1.5 shadow-sm shrink-0 ${
+                pageAccess.allow_participant_edit
+                  ? 'bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40'
+                  : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+              }`}
+            >
+              <MaterialIcon name={pageAccess.allow_participant_edit ? 'lock' : 'lock_open'} size={15} />
+              <span>{pageAccess.allow_participant_edit ? 'Disable Name Editing' : 'Enable Name Editing'}</span>
+            </button>
+          </div>
+
+          {/* Series Permission Badges & Custom Series Input */}
+          <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-xs font-mono font-bold text-slate-300 uppercase">
+                Active Series Permissions:
+              </span>
+              <span className="text-[11px] text-slate-400 font-mono">
+                Click any series pill to toggle access on or off
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* All Series Wildcard Pill */}
+              <button
+                type="button"
+                disabled={savingAccess}
+                onClick={() => handleToggleSeriesPermission('*')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition flex items-center gap-1.5 border ${
+                  (pageAccess.allowed_edit_series || []).includes('*') || (pageAccess.allowed_edit_series || []).includes('all')
+                    ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400/60 shadow-sm'
+                    : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
+                <MaterialIcon name="all_inclusive" size={14} />
+                <span>All Series (*)</span>
+              </button>
+
+              {/* Standard Series Pills */}
+              {['20', '21', '22', '23', '24', '25', '26'].map((series) => {
+                const isSelected =
+                  (pageAccess.allowed_edit_series || []).includes('*') ||
+                  (pageAccess.allowed_edit_series || []).includes('all') ||
+                  (pageAccess.allowed_edit_series || []).includes(series);
+                return (
+                  <button
+                    key={series}
+                    type="button"
+                    disabled={savingAccess}
+                    onClick={() => handleToggleSeriesPermission(series)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition flex items-center gap-1 border ${
+                      isSelected
+                        ? 'bg-purple-600/30 text-purple-200 border-purple-500/50 shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <MaterialIcon name={isSelected ? 'check' : 'add'} size={13} />
+                    <span>Series {series}</span>
+                  </button>
+                );
+              })}
+
+              {/* Any other series currently configured */}
+              {(pageAccess.allowed_edit_series || [])
+                .filter((s) => !['*', 'all', '20', '21', '22', '23', '24', '25', '26'].includes(s))
+                .map((custom) => (
+                  <button
+                    key={custom}
+                    type="button"
+                    disabled={savingAccess}
+                    onClick={() => handleToggleSeriesPermission(custom)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold font-mono bg-purple-600/30 text-purple-200 border border-purple-500/50 shadow-sm flex items-center gap-1"
+                  >
+                    <MaterialIcon name="check" size={13} />
+                    <span>Series {custom}</span>
+                  </button>
+                ))}
+            </div>
+
+            {/* Add Custom Series Box */}
+            <div className="pt-2 flex items-center gap-2 max-w-sm">
+              <input
+                type="text"
+                placeholder="Add series (e.g. 19, 27)..."
+                value={newCustomSeries}
+                maxLength={4}
+                onChange={(e) => setNewCustomSeries(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddCustomSeries();
+                  }
+                }}
+                className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs outline-none focus:border-cyan-400 transition"
+              />
+              <button
+                type="button"
+                disabled={savingAccess || !newCustomSeries.trim()}
+                onClick={handleAddCustomSeries}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-mono text-xs font-bold border border-slate-700 transition disabled:opacity-40"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Modal: Participant Roster Import */}
@@ -1971,7 +2238,7 @@ export const ControllerConsole: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Participant Self-Registration Verification Queue */}
+      {/* Modal: Verification & Moderation Center (Registrations & Student Name Edits) */}
       {showVerifyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
           <div className="max-w-4xl w-full max-h-[90vh] flex flex-col rounded-3xl p-6 sm:p-8 border border-purple-500/40 bg-slate-900/95 shadow-2xl text-slate-200 space-y-5 overflow-hidden">
@@ -1983,10 +2250,10 @@ export const ControllerConsole: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-lg sm:text-xl font-bold font-display text-white">
-                    Participant Registration Verification Center
+                    Verification & Moderation Center
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Review and verify incoming self-registration requests from the public directory
+                    Review and verify incoming participant registrations and student name correction requests
                   </p>
                 </div>
               </div>
@@ -1999,229 +2266,523 @@ export const ControllerConsole: React.FC = () => {
               </button>
             </div>
 
-            {/* Metrics Ribbon & Batch Actions */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
-                <span className="text-[10px] font-mono uppercase text-slate-400">Total Requests</span>
-                <div className="text-xl font-black font-display text-white mt-0.5">{registrations.length}</div>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-                <span className="text-[10px] font-mono uppercase text-amber-400">Pending Review</span>
-                <div className="text-xl font-black font-display text-amber-300 mt-0.5">
-                  {registrations.filter((r) => r.status === 'pending').length}
-                </div>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
-                <span className="text-[10px] font-mono uppercase text-emerald-400">Approved & Enrolled</span>
-                <div className="text-xl font-black font-display text-emerald-300 mt-0.5">
-                  {registrations.filter((r) => r.status === 'approved').length}
-                </div>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30">
-                <span className="text-[10px] font-mono uppercase text-rose-400">Rejected</span>
-                <div className="text-xl font-black font-display text-rose-300 mt-0.5">
-                  {registrations.filter((r) => r.status === 'rejected').length}
-                </div>
-              </div>
-            </div>
-
-            {/* Filter and Search Bar */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-              <div className="flex flex-wrap items-center gap-2">
-                {(['pending', 'approved', 'rejected', 'all'] as const).map((st) => {
-                  const count =
-                    st === 'all'
-                      ? registrations.length
-                      : registrations.filter((r) => r.status === st).length;
-                  return (
-                    <button
-                      key={st}
-                      type="button"
-                      onClick={() => setRegFilterStatus(st)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition capitalize flex items-center gap-1.5 ${
-                        regFilterStatus === st
-                          ? 'bg-purple-600 text-white shadow-md'
-                          : 'bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span>{st}</span>
-                      <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30 text-white font-mono">
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1 sm:w-56">
-                  <input
-                    type="text"
-                    placeholder="Filter by name or roll..."
-                    value={regSearchQuery}
-                    onChange={(e) => setRegSearchQuery(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500 transition"
-                  />
-                  <MaterialIcon name="search" size={16} className="absolute left-2.5 top-2 text-slate-500" />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={fetchRegistrations}
-                  disabled={loadingRegistrations}
-                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                  title="Refresh registrations"
-                >
-                  <MaterialIcon name="refresh" size={18} className={loadingRegistrations ? 'animate-spin' : ''} />
-                </button>
-              </div>
-            </div>
-
-            {/* Batch Action Bar */}
-            {registrations.filter((r) => r.status === 'pending').length > 0 && (
-              <div className="p-3 rounded-2xl bg-purple-950/30 border border-purple-500/30 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-purple-200 flex items-center gap-2">
-                  <MaterialIcon name="bolt" size={18} className="text-purple-400" />
-                  <span>
-                    <strong>{registrations.filter((r) => r.status === 'pending').length}</strong> registrations waiting for verification
+            {/* Tab Navigation */}
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+              <button
+                type="button"
+                onClick={() => setVerifyTab('registrations')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold font-mono transition flex items-center gap-2 ${
+                  verifyTab === 'registrations'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <MaterialIcon name="person_add" size={16} />
+                <span>Registrations</span>
+                {registrations.filter((r) => r.status === 'pending').length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-pink-500 text-white font-mono font-bold">
+                    {registrations.filter((r) => r.status === 'pending').length}
                   </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={batchReviewing}
-                    onClick={() => handleBatchReview('approve')}
-                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
-                  >
-                    <MaterialIcon name="done_all" size={15} />
-                    <span>Approve All Pending</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={batchReviewing}
-                    onClick={() => handleBatchReview('reject')}
-                    className="px-3.5 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-200 border border-rose-500/30 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
-                  >
-                    <MaterialIcon name="remove_circle_outline" size={15} />
-                    <span>Reject All Pending</span>
-                  </button>
-                </div>
-              </div>
-            )}
+                )}
+              </button>
 
-            {/* Requests List */}
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 max-h-[420px]">
-              {registrations
-                .filter((r) => {
-                  const matchStatus = regFilterStatus === 'all' ? true : r.status === regFilterStatus;
-                  const matchType = regFilterType === 'all' ? true : r.type === regFilterType;
-                  const q = regSearchQuery.toLowerCase().trim();
-                  const matchQuery =
-                    !q ||
-                    r.name.toLowerCase().includes(q) ||
-                    (r.external_id && r.external_id.toLowerCase().includes(q));
-                  return matchStatus && matchType && matchQuery;
-                })
-                .map((req) => (
-                  <div
-                    key={req.id}
-                    className="p-3.5 rounded-2xl bg-slate-950/70 hover:bg-slate-950 border border-slate-800 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            req.type === 'student'
-                              ? 'bg-cyan-500/20 text-cyan-300'
-                              : req.type === 'faculty'
-                              ? 'bg-purple-500/20 text-purple-300'
-                              : 'bg-amber-500/20 text-amber-300'
-                          }`}
-                        >
-                          {req.type}
-                        </span>
-                        <span className="text-sm font-bold text-white">{req.name}</span>
-                        {req.external_id && (
-                          <span className="font-mono text-xs text-slate-400 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
-                            {req.external_id}
-                          </span>
-                        )}
-                        <span
-                          className={`text-[10px] font-bold font-mono uppercase px-2 py-0.5 rounded-full ${
-                            req.status === 'approved'
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : req.status === 'rejected'
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
-                          }`}
-                        >
-                          {req.status}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-400 flex items-center gap-3">
-                        <span>Designation: {req.designation || 'Participant'}</span>
-                        <span>•</span>
-                        <span>
-                          Registered: {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        {req.review_notes && (
-                          <>
-                            <span>•</span>
-                            <span className="italic text-slate-400">Note: {req.review_notes}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setVerifyTab('edits');
+                  fetchEditRequests();
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold font-mono transition flex items-center gap-2 ${
+                  verifyTab === 'edits'
+                    ? 'bg-cyan-600 text-white shadow-md'
+                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <MaterialIcon name="edit_note" size={16} />
+                <span>Student Name Edits</span>
+                {editRequests.filter((r) => r.status === 'pending').length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-slate-950 font-mono font-black animate-pulse">
+                    {editRequests.filter((r) => r.status === 'pending').length}
+                  </span>
+                )}
+              </button>
+            </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 self-end sm:self-center">
-                      {req.status === 'pending' ? (
-                        <>
-                          <button
-                            type="button"
-                            disabled={reviewingId === req.id}
-                            onClick={() => handleReviewRegistration(req.id, 'approve')}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold font-mono transition flex items-center gap-1 shadow-sm disabled:opacity-40"
-                          >
-                            <MaterialIcon name="check" size={15} />
-                            <span>{reviewingId === req.id ? 'Approving...' : 'Approve & Enroll'}</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={reviewingId === req.id}
-                            onClick={() => handleReviewRegistration(req.id, 'reject', 'Rejected by controller')}
-                            className="px-3 py-1.5 rounded-xl bg-rose-600/30 hover:bg-rose-600/50 text-rose-200 border border-rose-500/40 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
-                          >
-                            <MaterialIcon name="close" size={15} />
-                            <span>Reject</span>
-                          </button>
-                        </>
-                      ) : (
-                        <div className="text-right">
-                          <span className="text-[11px] font-mono text-slate-400">
-                            {req.reviewed_by ? `Reviewed by ${req.reviewed_by}` : 'Processed'}
-                          </span>
-                        </div>
-                      )}
+            {/* TAB 1: REGISTRATIONS */}
+            {verifyTab === 'registrations' && (
+              <>
+                {/* Metrics Ribbon */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
+                    <span className="text-[10px] font-mono uppercase text-slate-400">Total Requests</span>
+                    <div className="text-xl font-black font-display text-white mt-0.5">{registrations.length}</div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                    <span className="text-[10px] font-mono uppercase text-amber-400">Pending Review</span>
+                    <div className="text-xl font-black font-display text-amber-300 mt-0.5">
+                      {registrations.filter((r) => r.status === 'pending').length}
                     </div>
                   </div>
-                ))}
-
-              {registrations.length === 0 && (
-                <div className="py-12 text-center text-slate-500 text-xs font-mono space-y-2">
-                  <MaterialIcon name="inbox" size={32} className="mx-auto text-slate-600" />
-                  <p>No participant registration requests found.</p>
-                  <p className="text-slate-600">
-                    Participants can self-register on <code>/participants</code> when enabled.
-                  </p>
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
+                    <span className="text-[10px] font-mono uppercase text-emerald-400">Approved & Enrolled</span>
+                    <div className="text-xl font-black font-display text-emerald-300 mt-0.5">
+                      {registrations.filter((r) => r.status === 'approved').length}
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30">
+                    <span className="text-[10px] font-mono uppercase text-rose-400">Rejected</span>
+                    <div className="text-xl font-black font-display text-rose-300 mt-0.5">
+                      {registrations.filter((r) => r.status === 'rejected').length}
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
+
+                {/* Filter and Search Bar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(['pending', 'approved', 'rejected', 'all'] as const).map((st) => {
+                      const count =
+                        st === 'all'
+                          ? registrations.length
+                          : registrations.filter((r) => r.status === st).length;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setRegFilterStatus(st)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition capitalize flex items-center gap-1.5 ${
+                            regFilterStatus === st
+                              ? 'bg-purple-600 text-white shadow-md'
+                              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <span>{st}</span>
+                          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30 text-white font-mono">
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 sm:w-56">
+                      <input
+                        type="text"
+                        placeholder="Filter by name or roll..."
+                        value={regSearchQuery}
+                        onChange={(e) => setRegSearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500 transition"
+                      />
+                      <MaterialIcon name="search" size={16} className="absolute left-2.5 top-2 text-slate-500" />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={fetchRegistrations}
+                      disabled={loadingRegistrations}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                      title="Refresh registrations"
+                    >
+                      <MaterialIcon name="refresh" size={18} className={loadingRegistrations ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Batch Action Bar */}
+                {registrations.filter((r) => r.status === 'pending').length > 0 && (
+                  <div className="p-3 rounded-2xl bg-purple-950/30 border border-purple-500/30 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-purple-200 flex items-center gap-2">
+                      <MaterialIcon name="bolt" size={18} className="text-purple-400" />
+                      <span>
+                        <strong>{registrations.filter((r) => r.status === 'pending').length}</strong> registrations waiting for verification
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={batchReviewing}
+                        onClick={() => handleBatchReview('approve')}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
+                      >
+                        <MaterialIcon name="done_all" size={15} />
+                        <span>Approve All Pending</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={batchReviewing}
+                        onClick={() => handleBatchReview('reject')}
+                        className="px-3.5 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-200 border border-rose-500/30 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
+                      >
+                        <MaterialIcon name="remove_circle_outline" size={15} />
+                        <span>Reject All Pending</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Requests List */}
+                <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 max-h-[420px]">
+                  {registrations
+                    .filter((r) => {
+                      const matchStatus = regFilterStatus === 'all' ? true : r.status === regFilterStatus;
+                      const matchType = regFilterType === 'all' ? true : r.type === regFilterType;
+                      const q = regSearchQuery.toLowerCase().trim();
+                      const matchQuery =
+                        !q ||
+                        r.name.toLowerCase().includes(q) ||
+                        (r.external_id && r.external_id.toLowerCase().includes(q));
+                      return matchStatus && matchType && matchQuery;
+                    })
+                    .map((req) => (
+                      <div
+                        key={req.id}
+                        className="p-3.5 rounded-2xl bg-slate-950/70 hover:bg-slate-950 border border-slate-800 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                req.type === 'student'
+                                  ? 'bg-cyan-500/20 text-cyan-300'
+                                  : req.type === 'faculty'
+                                  ? 'bg-purple-500/20 text-purple-300'
+                                  : 'bg-amber-500/20 text-amber-300'
+                              }`}
+                            >
+                              {req.type}
+                            </span>
+                            <span className="text-sm font-bold text-white">{req.name}</span>
+                            {req.external_id && (
+                              <span className="font-mono text-xs text-slate-400 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
+                                {req.external_id}
+                              </span>
+                            )}
+                            <span
+                              className={`text-[10px] font-bold font-mono uppercase px-2 py-0.5 rounded-full ${
+                                req.status === 'approved'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                  : req.status === 'rejected'
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                              }`}
+                            >
+                              {req.status}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-400 flex items-center gap-3">
+                            <span>Designation: {req.designation || 'Participant'}</span>
+                            <span>•</span>
+                            <span>
+                              Registered: {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            {req.review_notes && (
+                              <>
+                                <span>•</span>
+                                <span className="italic text-slate-400">Note: {req.review_notes}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 self-end sm:self-center">
+                          {req.status === 'pending' ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={reviewingId === req.id}
+                                onClick={() => handleReviewRegistration(req.id, 'approve')}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold font-mono transition flex items-center gap-1 shadow-sm disabled:opacity-40"
+                              >
+                                <MaterialIcon name="check" size={15} />
+                                <span>{reviewingId === req.id ? 'Approving...' : 'Approve & Enroll'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={reviewingId === req.id}
+                                onClick={() => handleReviewRegistration(req.id, 'reject', 'Rejected by controller')}
+                                className="px-3 py-1.5 rounded-xl bg-rose-600/30 hover:bg-rose-600/50 text-rose-200 border border-rose-500/40 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
+                              >
+                                <MaterialIcon name="close" size={15} />
+                                <span>Reject</span>
+                              </button>
+                            </>
+                          ) : (
+                            <div className="text-right">
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {req.reviewed_by ? `Reviewed by ${req.reviewed_by}` : 'Processed'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                  {registrations.length === 0 && (
+                    <div className="py-12 text-center text-slate-500 text-xs font-mono space-y-2">
+                      <MaterialIcon name="inbox" size={32} className="mx-auto text-slate-600" />
+                      <p>No participant registration requests found.</p>
+                      <p className="text-slate-600">
+                        Participants can self-register on <code>/participants</code> when enabled.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* TAB 2: STUDENT NAME EDIT REQUESTS */}
+            {verifyTab === 'edits' && (
+              <>
+                {/* Metrics Ribbon */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
+                    <span className="text-[10px] font-mono uppercase text-slate-400">Total Name Edits</span>
+                    <div className="text-xl font-black font-display text-white mt-0.5">{editRequests.length}</div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                    <span className="text-[10px] font-mono uppercase text-amber-400">Pending Review</span>
+                    <div className="text-xl font-black font-display text-amber-300 mt-0.5">
+                      {editRequests.filter((r) => r.status === 'pending').length}
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
+                    <span className="text-[10px] font-mono uppercase text-emerald-400">Approved & Updated</span>
+                    <div className="text-xl font-black font-display text-emerald-300 mt-0.5">
+                      {editRequests.filter((r) => r.status === 'approved').length}
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30">
+                    <span className="text-[10px] font-mono uppercase text-rose-400">Rejected</span>
+                    <div className="text-xl font-black font-display text-rose-300 mt-0.5">
+                      {editRequests.filter((r) => r.status === 'rejected').length}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filter and Search Bar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(['pending', 'approved', 'rejected', 'all'] as const).map((st) => {
+                      const count =
+                        st === 'all'
+                          ? editRequests.length
+                          : editRequests.filter((r) => r.status === st).length;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setEditFilterStatus(st)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition capitalize flex items-center gap-1.5 ${
+                            editFilterStatus === st
+                              ? 'bg-cyan-600 text-white shadow-md'
+                              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <span>{st}</span>
+                          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30 text-white font-mono">
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {/* Series Filter Selector */}
+                    <select
+                      value={editFilterSeries}
+                      onChange={(e) => setEditFilterSeries(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-300 text-xs font-mono font-semibold focus:outline-none focus:border-cyan-400"
+                    >
+                      <option value="all">All Series</option>
+                      {Array.from(new Set(editRequests.map((r) => r.series).filter(Boolean))).sort().map((ser) => (
+                        <option key={ser} value={ser}>
+                          Series {ser}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 sm:w-56">
+                      <input
+                        type="text"
+                        placeholder="Search student ID or name..."
+                        value={editSearchQuery}
+                        onChange={(e) => setEditSearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 text-xs focus:outline-none focus:border-cyan-500 transition"
+                      />
+                      <MaterialIcon name="search" size={16} className="absolute left-2.5 top-2 text-slate-500" />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={fetchEditRequests}
+                      disabled={loadingEditRequests}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                      title="Refresh name edit requests"
+                    >
+                      <MaterialIcon name="refresh" size={18} className={loadingEditRequests ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Batch Action Bar */}
+                {editRequests.filter((r) => r.status === 'pending').length > 0 && (
+                  <div className="p-3 rounded-2xl bg-cyan-950/30 border border-cyan-500/30 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-cyan-200 flex items-center gap-2">
+                      <MaterialIcon name="bolt" size={18} className="text-cyan-400" />
+                      <span>
+                        <strong>{editRequests.filter((r) => r.status === 'pending').length}</strong> name edit requests awaiting controller verification
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={batchReviewingEdits}
+                        onClick={() => handleBatchReviewEditRequests('approve')}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
+                      >
+                        <MaterialIcon name="done_all" size={15} />
+                        <span>Approve All Pending</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={batchReviewingEdits}
+                        onClick={() => handleBatchReviewEditRequests('reject')}
+                        className="px-3.5 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-200 border border-rose-500/30 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
+                      >
+                        <MaterialIcon name="remove_circle_outline" size={15} />
+                        <span>Reject All Pending</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Edit Requests List */}
+                <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 max-h-[420px]">
+                  {editRequests
+                    .filter((r) => {
+                      const matchStatus = editFilterStatus === 'all' ? true : r.status === editFilterStatus;
+                      const matchSeries = editFilterSeries === 'all' ? true : r.series === editFilterSeries;
+                      const q = editSearchQuery.toLowerCase().trim();
+                      const matchQuery =
+                        !q ||
+                        r.student_id.toLowerCase().includes(q) ||
+                        r.requested_name.toLowerCase().includes(q) ||
+                        (r.current_name && r.current_name.toLowerCase().includes(q));
+                      return matchStatus && matchSeries && matchQuery;
+                    })
+                    .map((req) => (
+                      <div
+                        key={req.id}
+                        className="p-4 rounded-2xl bg-slate-950/70 hover:bg-slate-950 border border-slate-800 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                              Series {req.series || '??'}
+                            </span>
+                            <span className="font-mono text-xs font-bold text-white bg-slate-900 px-2.5 py-0.5 rounded-md border border-slate-700">
+                              Roll: {req.student_id}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold font-mono uppercase px-2 py-0.5 rounded-full ${
+                                req.status === 'approved'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                  : req.status === 'rejected'
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                              }`}
+                            >
+                              {req.status === 'approved' ? 'Approved & DB Updated' : req.status}
+                            </span>
+                          </div>
+
+                          {/* Visual Comparison: Current Name ➔ Requested Name */}
+                          <div className="flex items-center gap-2 text-sm flex-wrap pt-0.5">
+                            <span className="text-slate-500 line-through text-xs font-medium">
+                              {req.current_name || '(No previous name)'}
+                            </span>
+                            <MaterialIcon name="arrow_forward" size={14} className="text-cyan-400" />
+                            <span className="font-bold text-cyan-200 bg-cyan-950/80 px-2.5 py-1 rounded-lg border border-cyan-500/40 text-sm">
+                              {req.requested_name}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+                            {req.reason && (
+                              <span className="italic text-slate-300">
+                                Reason: "{req.reason}"
+                              </span>
+                            )}
+                            <span>•</span>
+                            <span>
+                              Submitted: {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({new Date(req.created_at).toLocaleDateString()})
+                            </span>
+                            {req.review_notes && (
+                              <>
+                                <span>•</span>
+                                <span className="text-slate-400 italic">Notes: {req.review_notes}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                          {req.status === 'pending' ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={reviewingEditId === req.id}
+                                onClick={() => handleReviewEditRequest(req.id, 'approve')}
+                                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold font-mono transition flex items-center gap-1.5 shadow-sm disabled:opacity-40"
+                                title="Approve this correction and update official database immediately"
+                              >
+                                <MaterialIcon name="check" size={15} />
+                                <span>{reviewingEditId === req.id ? 'Updating DB...' : 'Approve & Update DB'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={reviewingEditId === req.id}
+                                onClick={() => handleReviewEditRequest(req.id, 'reject', 'Rejected by controller')}
+                                className="px-3 py-2 rounded-xl bg-rose-600/30 hover:bg-rose-600/50 text-rose-200 border border-rose-500/40 text-xs font-bold font-mono transition flex items-center gap-1 disabled:opacity-40"
+                              >
+                                <MaterialIcon name="close" size={15} />
+                                <span>Reject</span>
+                              </button>
+                            </>
+                          ) : (
+                            <div className="text-right">
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {req.reviewed_by ? `Reviewed by ${req.reviewed_by}` : 'Processed'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                  {editRequests.length === 0 && (
+                    <div className="py-12 text-center text-slate-500 text-xs font-mono space-y-2">
+                      <MaterialIcon name="edit_note" size={32} className="mx-auto text-slate-600" />
+                      <p>No student name edit requests found.</p>
+                      <p className="text-slate-600">
+                        Students from allowed series can request corrections from <code>/participants</code>.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* Modal Footer */}
             <div className="flex items-center justify-between pt-3 border-t border-slate-800 text-xs">
               <span className="text-slate-400">
-                Approved participants are immediately added to <code>cse_fest_2026_participants</code> and made eligible.
+                {verifyTab === 'registrations'
+                  ? 'Approved registrations are immediately added to cse_fest_2026_participants.'
+                  : 'Approved student name edits immediately update the participant name in cse_fest_2026_participants.'}
               </span>
               <button
                 type="button"

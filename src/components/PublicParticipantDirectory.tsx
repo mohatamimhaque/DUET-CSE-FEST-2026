@@ -35,21 +35,81 @@ export const PublicParticipantDirectory: React.FC = () => {
   const [regSubmitting, setRegSubmitting] = useState<boolean>(false);
   const [regFeedback, setRegFeedback] = useState<{ success?: boolean; message?: string } | null>(null);
 
-  // Check if self-registration is enabled by controller
+  // Participant Name Correction Modal State
+  const [editConfig, setEditConfig] = useState<{ allow_participant_edit: boolean; allowed_edit_series: string[] }>({
+    allow_participant_edit: true,
+    allowed_edit_series: ['20', '21', '22', '23', '24'],
+  });
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
+  const [editStudentId, setEditStudentId] = useState<string>('');
+  const [editCurrentName, setEditCurrentName] = useState<string>('');
+  const [editRequestedName, setEditRequestedName] = useState<string>('');
+  const [editReason, setEditReason] = useState<string>('');
+  const [editSubmitting, setEditSubmitting] = useState<boolean>(false);
+  const [editFeedback, setEditFeedback] = useState<{ success?: boolean; message?: string } | null>(null);
+
+  const getStudentSeries = (id?: string | null): string => {
+    if (!id) return '';
+    const clean = String(id).trim();
+    const m = clean.match(/^\d{2}/);
+    return m ? m[0] : clean.slice(0, 2);
+  };
+
+  const isSeriesAllowed = (series: string): boolean => {
+    if (!editConfig.allow_participant_edit) return false;
+    const allowed = editConfig.allowed_edit_series || [];
+    if (allowed.length === 0 || allowed.includes('*') || allowed.includes('all')) return true;
+    return allowed.includes(series);
+  };
+
+  const handleOpenEditModal = (p?: ParticipantRow) => {
+    if (p) {
+      setEditStudentId(p.id || '');
+      setEditCurrentName(p.name || '');
+      setEditRequestedName(p.name || '');
+    } else {
+      setEditStudentId('');
+      setEditCurrentName('');
+      setEditRequestedName('');
+    }
+    setEditReason('');
+    setEditFeedback(null);
+    setShowEditModal(true);
+  };
+
+  // Check if self-registration and edit settings are enabled by controller
   useEffect(() => {
     let isMounted = true;
-    const checkSelfRegStatus = async () => {
+    const checkSettings = async () => {
       try {
-        const res = await api.getPageAccessStatus('participants');
-        if (res.settings && isMounted) {
-          setSelfRegEnabled(res.settings.self_registration !== false);
+        const [pageRes, editRes] = await Promise.all([
+          api.getPageAccessStatus('participants'),
+          api.getParticipantEditConfig(),
+        ]);
+        if (isMounted) {
+          if (pageRes.settings) {
+            setSelfRegEnabled(pageRes.settings.self_registration !== false);
+            if (pageRes.settings.allow_participant_edit !== undefined) {
+              setEditConfig((prev) => ({
+                ...prev,
+                allow_participant_edit: pageRes.settings.allow_participant_edit !== false,
+                allowed_edit_series: pageRes.settings.allowed_edit_series || prev.allowed_edit_series,
+              }));
+            }
+          }
+          if (editRes) {
+            setEditConfig({
+              allow_participant_edit: editRes.allow_participant_edit !== false,
+              allowed_edit_series: editRes.allowed_edit_series || ['20', '21', '22', '23', '24'],
+            });
+          }
         }
       } catch {
-        // Fallback to true
+        // Fallback
       }
     };
 
-    checkSelfRegStatus();
+    checkSettings();
 
     // Listen to real-time events for instant update
     let eventSource: EventSource | null = null;
@@ -62,6 +122,15 @@ export const PublicParticipantDirectory: React.FC = () => {
             if (data.payload.self_registration !== undefined) {
               setSelfRegEnabled(data.payload.self_registration !== false);
             }
+            if (data.payload.allow_participant_edit !== undefined || data.payload.allowed_edit_series !== undefined) {
+              setEditConfig({
+                allow_participant_edit: data.payload.allow_participant_edit !== false,
+                allowed_edit_series: data.payload.allowed_edit_series || ['20', '21', '22', '23', '24'],
+              });
+            }
+          }
+          if (data.type === 'PARTICIPANTS_UPDATED') {
+            fetchData();
           }
         } catch {}
       };
@@ -72,6 +141,55 @@ export const PublicParticipantDirectory: React.FC = () => {
       if (eventSource) eventSource.close();
     };
   }, []);
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editConfig.allow_participant_edit) {
+      setEditFeedback({
+        success: false,
+        message: 'Student name corrections are currently closed by the event controller.',
+      });
+      return;
+    }
+    const cleanId = editStudentId.trim();
+    const cleanReq = editRequestedName.trim();
+    if (!cleanId || !cleanReq) {
+      setEditFeedback({ success: false, message: 'Student ID and requested name are required.' });
+      return;
+    }
+    const series = getStudentSeries(cleanId);
+    if (!isSeriesAllowed(series)) {
+      setEditFeedback({
+        success: false,
+        message: `Series ${series || '??'} is not currently authorized for name editing.`,
+      });
+      return;
+    }
+    if (editCurrentName && cleanReq.toLowerCase() === editCurrentName.trim().toLowerCase()) {
+      setEditFeedback({
+        success: false,
+        message: 'Requested name must be different from the currently registered name.',
+      });
+      return;
+    }
+
+    setEditSubmitting(true);
+    setEditFeedback(null);
+    try {
+      const res = await api.requestParticipantEdit({
+        student_id: cleanId,
+        current_name: editCurrentName.trim() || undefined,
+        requested_name: cleanReq,
+        reason: editReason.trim() || undefined,
+      });
+      setEditFeedback({ success: true, message: res.message });
+      setEditReason('');
+    } catch (err: any) {
+      setEditFeedback({ success: false, message: err.message });
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,6 +300,18 @@ export const PublicParticipantDirectory: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-auto">
+            {editConfig.allow_participant_edit && (
+              <button
+                type="button"
+                onClick={() => handleOpenEditModal()}
+                className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-white text-xs font-bold font-mono transition flex items-center gap-1.5 shadow-sm"
+                title="Submit a student name correction for controller verification"
+              >
+                <MaterialIcon name="edit" size={16} />
+                <span>NAME CORRECTION</span>
+              </button>
+            )}
+
             {selfRegEnabled ? (
               <button
                 type="button"
@@ -253,6 +383,39 @@ export const PublicParticipantDirectory: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Student Name Edit Announcement Banner */}
+        {editConfig.allow_participant_edit ? (
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-start sm:items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-400/30 shrink-0">
+                <MaterialIcon name="how_to_reg" size={18} />
+              </div>
+              <div>
+                <span className="font-bold text-white">Student Name Verification & Correction: </span>
+                <span className="text-slate-300">
+                  Spotted a typo or wrong spelling in your name? Find your entry in the list and click{' '}
+                  <strong className="text-cyan-300">Edit Name</strong>. Requests are verified by the controller before updating the official table.
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto font-mono text-[11px]">
+              <span className="text-slate-400">Allowed Series:</span>
+              <span className="px-2.5 py-1 rounded-lg bg-slate-900/90 text-cyan-300 font-bold border border-cyan-500/30">
+                {editConfig.allowed_edit_series?.includes('*') || editConfig.allowed_edit_series?.includes('all')
+                  ? 'All Series (*)'
+                  : (editConfig.allowed_edit_series || []).map((s) => `${s}`).join(', ') || 'None'}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-3 text-xs text-slate-400">
+            <div className="flex items-center gap-2">
+              <MaterialIcon name="lock" size={16} className="text-slate-500" />
+              <span>Student name editing is currently turned off by the event administrator.</span>
+            </div>
+          </div>
+        )}
 
         {/* Search & Filtering Toolbar */}
         <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-cyan-500/25 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
@@ -328,6 +491,7 @@ export const PublicParticipantDirectory: React.FC = () => {
                   <th className="px-5 py-3.5">Category</th>
                   <th className="px-5 py-3.5">Designation</th>
                   <th className="px-5 py-3.5 text-right">Raffle Status</th>
+                  <th className="px-5 py-3.5 text-center">Name Edit</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-medium text-slate-200">
@@ -373,12 +537,63 @@ export const PublicParticipantDirectory: React.FC = () => {
                         </span>
                       )}
                     </td>
+                    <td className="px-5 py-3.5 text-center">
+                      {p.type === 'student' ? (
+                        (() => {
+                          const series = getStudentSeries(p.id);
+                          const isAllowed = isSeriesAllowed(series);
+
+                          if (!editConfig.allow_participant_edit) {
+                            return (
+                              <span
+                                className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-500 italic"
+                                title="Name editing disabled by controller"
+                              >
+                                <MaterialIcon name="lock" size={13} />
+                                <span>Closed</span>
+                              </span>
+                            );
+                          }
+
+                          if (!isAllowed) {
+                            return (
+                              <span
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-700/60 text-slate-500 text-[11px] font-mono cursor-not-allowed"
+                                title={`Series ${series || '??'} name editing is not enabled`}
+                              >
+                                <MaterialIcon name="lock" size={13} />
+                                <span>S-{series || '??'} Locked</span>
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditModal(p)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-300 hover:text-white text-xs font-bold font-mono transition shadow-sm"
+                              title={`Found a typo? Request name correction for roll ${p.id || ''}`}
+                            >
+                              <MaterialIcon name="edit" size={13} />
+                              <span>Edit Name</span>
+                            </button>
+                          );
+                        })()
+                      ) : (
+                        <span
+                          className="text-[11px] text-slate-600 font-mono italic"
+                          title="Name editing is restricted to students only"
+                        >
+                          —
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
 
                 {participants.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-14 text-center text-slate-400">
+                    <td colSpan={6} className="px-6 py-14 text-center text-slate-400">
                       <MaterialIcon
                         name={counts.total === 0 ? 'storage' : 'search_off'}
                         size={36}
@@ -581,6 +796,155 @@ export const PublicParticipantDirectory: React.FC = () => {
                     </>
                   ) : (
                     <span>SUBMIT REGISTRATION</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Student Name Correction Request */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="max-w-md w-full rounded-2xl sm:rounded-3xl p-6 sm:p-7 border border-cyan-500/40 bg-slate-900 shadow-2xl text-slate-200 space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
+                  <MaterialIcon name="edit_note" size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold font-display text-white">
+                    Request Name Correction
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Submit verified spelling update for student participant
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <MaterialIcon name="close" size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              {editFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-start gap-2 border ${
+                    editFeedback.success
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <MaterialIcon
+                    name={editFeedback.success ? 'check_circle' : 'error'}
+                    size={16}
+                    className="shrink-0 mt-0.5"
+                  />
+                  <span>{editFeedback.message}</span>
+                </div>
+              )}
+
+              {/* Student Roll / ID */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-mono font-bold text-slate-400 uppercase">
+                    Student ID / Roll <span className="text-rose-400">*</span>
+                  </label>
+                  {editStudentId && (
+                    <span className="text-[11px] font-mono text-cyan-400">
+                      Series: {getStudentSeries(editStudentId) || '??'}
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={editStudentId}
+                  onChange={(e) => setEditStudentId(e.target.value)}
+                  placeholder="e.g. 2303042"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-cyan-400 text-white font-mono text-sm outline-none transition"
+                />
+              </div>
+
+              {/* Current Name (if prefilled) */}
+              {editCurrentName && (
+                <div>
+                  <label className="block text-xs font-mono font-bold text-slate-400 uppercase mb-1">
+                    Current Registered Name
+                  </label>
+                  <div className="px-3.5 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 text-sm font-medium">
+                    {editCurrentName}
+                  </div>
+                </div>
+              )}
+
+              {/* Requested / Corrected Name */}
+              <div>
+                <label className="block text-xs font-mono font-bold text-slate-400 uppercase mb-1">
+                  Corrected Full Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editRequestedName}
+                  onChange={(e) => setEditRequestedName(e.target.value)}
+                  placeholder="Enter your exact official name"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-cyan-500/50 focus:border-cyan-400 text-white text-sm outline-none transition shadow-sm"
+                />
+              </div>
+
+              {/* Optional Reason / Note */}
+              <div>
+                <label className="block text-xs font-mono font-bold text-slate-400 uppercase mb-1">
+                  Reason for Correction (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editReason}
+                  onChange={(e) => setEditReason(e.target.value)}
+                  placeholder="e.g. Typo in first name, spelling mismatch"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-cyan-400 text-white text-sm outline-none transition"
+                />
+              </div>
+
+              {/* Notice regarding controller review */}
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs flex items-start gap-2">
+                <MaterialIcon name="verified_user" size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Controller Verification Required:</strong> Your name edit will not take effect immediately. It is submitted to the event controller who must verify and approve it before the official database is updated.
+                </span>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    !editConfig.allow_participant_edit ||
+                    editSubmitting ||
+                    !editStudentId.trim() ||
+                    !editRequestedName.trim()
+                  }
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-bold font-mono transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
+                  {editSubmitting ? (
+                    <>
+                      <MaterialIcon name="refresh" size={14} className="animate-spin" />
+                      <span>SUBMITTING...</span>
+                    </>
+                  ) : (
+                    <span>SUBMIT CORRECTION</span>
                   )}
                 </button>
               </div>

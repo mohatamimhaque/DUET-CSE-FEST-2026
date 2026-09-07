@@ -68,6 +68,25 @@ export interface PageAccessSettings {
   results: boolean;
   self_registration?: boolean;
   restriction_message: string;
+  allow_participant_edit?: boolean;
+  allowed_edit_series?: string[];
+}
+
+export interface ParticipantEditRequest {
+  id: string;
+  participant_id: string | null;
+  current_name: string;
+  requested_name: string;
+  type: ParticipantType;
+  student_id: string;
+  series: string;
+  department?: string;
+  reason?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_notes?: string | null;
+  created_at: string;
 }
 
 export interface RegistrationRequest {
@@ -138,6 +157,7 @@ export interface ControllerState extends SessionState {
   is_db_empty?: boolean;
   page_access?: PageAccessSettings;
   pending_registrations_count?: number;
+  pending_edit_requests_count?: number;
   visitor_analytics?: VisitorAnalytics;
   winners?: WinnerResult[];
 }
@@ -182,6 +202,7 @@ export const IgnoredCandidate = {} as any;
 export const SessionState = {} as any;
 export const PageAccessSettings = {} as any;
 export const RegistrationRequest = {} as any;
+export const ParticipantEditRequest = {} as any;
 export const VisitorAnalytics = {} as any;
 export const AuditRecord = {} as any;
 export const PublicEventInfo = {} as any;

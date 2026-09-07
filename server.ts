@@ -317,6 +317,42 @@ app.post('/api/public/participants/register', async (req: Request, res: Response
   return res.json(result);
 });
 
+// Participant Edit Config (Permission & Allowed Series)
+app.get('/api/public/participants/edit-config', async (_req: Request, res: Response) => {
+  const pageAccess = await supabaseRepository.getPageAccessSettings();
+  res.json({
+    allow_participant_edit: pageAccess.allow_participant_edit !== false,
+    allowed_edit_series: pageAccess.allowed_edit_series || ['20', '21', '22', '23', '24'],
+  });
+});
+
+// Participant Name Edit Request (Public for Students)
+app.post('/api/public/participants/edit-request', async (req: Request, res: Response) => {
+  const { student_id, current_name, requested_name, reason } = req.body;
+  if (!student_id || !requested_name) {
+    return res.status(400).json({
+      success: false,
+      message: 'Student ID and requested name are required.',
+    });
+  }
+
+  const result = await supabaseRepository.createEditRequest({
+    student_id,
+    current_name,
+    requested_name,
+    reason,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  // Notify controller in real-time
+  const ctrlState = await raffleService.getControllerState();
+  wsManager.broadcastController('STATE_UPDATED', ctrlState);
+  return res.json(result);
+});
+
 app.get('/api/health', async (_req: Request, res: Response) => {
   const mem = process.memoryUsage();
   const wsStats = wsManager.getStats();
@@ -585,6 +621,43 @@ app.post('/api/controller/registrations/batch-review', requireControllerAuth, as
   await raffleService.reloadParticipants();
   const updatedCtrlState = await raffleService.getControllerState();
   wsManager.broadcastController('STATE_UPDATED', updatedCtrlState);
+  res.json(result);
+});
+
+// Participant Name Edit Requests Review (Controller)
+app.get('/api/controller/edit-requests', requireControllerAuth, async (_req: Request, res: Response) => {
+  const requests = await supabaseRepository.getEditRequests();
+  res.json({ requests });
+});
+
+app.post('/api/controller/edit-requests/:id/review', requireControllerAuth, async (req: Request, res: Response) => {
+  const { action, notes } = req.body;
+  const result = await supabaseRepository.reviewEditRequest(
+    req.params.id,
+    action === 'approve' ? 'approve' : 'reject',
+    config.CONTROLLER_USERNAME,
+    notes
+  );
+  if (!result.success) return res.status(400).json(result);
+  await raffleService.reloadParticipants();
+  const updatedCtrlState = await raffleService.getControllerState();
+  wsManager.broadcastController('STATE_UPDATED', updatedCtrlState);
+  wsManager.broadcastAudience('STATE_UPDATED', raffleService.getPublicState());
+  res.json(result);
+});
+
+app.post('/api/controller/edit-requests/batch-review', requireControllerAuth, async (req: Request, res: Response) => {
+  const { action, request_ids } = req.body;
+  const result = await supabaseRepository.batchReviewEditRequests(
+    action === 'approve' ? 'approve' : 'reject',
+    config.CONTROLLER_USERNAME,
+    request_ids
+  );
+  if (!result.success) return res.status(400).json(result);
+  await raffleService.reloadParticipants();
+  const updatedCtrlState = await raffleService.getControllerState();
+  wsManager.broadcastController('STATE_UPDATED', updatedCtrlState);
+  wsManager.broadcastAudience('STATE_UPDATED', raffleService.getPublicState());
   res.json(result);
 });
 

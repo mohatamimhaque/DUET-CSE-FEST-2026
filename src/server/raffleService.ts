@@ -114,13 +114,15 @@ export class RaffleService {
       else if (p.type === 'guest') guestCount++;
     }
 
-    const [resultsData, pageAccess, registrationRequests] = await Promise.all([
+    const [resultsData, pageAccess, registrationRequests, editRequests] = await Promise.all([
       supabaseRepository.getResults(),
       supabaseRepository.getPageAccessSettings(),
       supabaseRepository.getRegistrationRequests(),
+      supabaseRepository.getEditRequests(),
     ]);
     const visitorAnalytics = supabaseRepository.getVisitorAnalytics();
     const pendingRegCount = registrationRequests.filter((r) => r.status === 'pending').length;
+    const pendingEditCount = editRequests.filter((r) => r.status === 'pending').length;
 
     return {
       ...this.session,
@@ -138,6 +140,7 @@ export class RaffleService {
       page_access: pageAccess,
       visitor_analytics: visitorAnalytics,
       pending_registrations_count: pendingRegCount,
+      pending_edit_requests_count: pendingEditCount,
     };
   }
 

@@ -5,6 +5,7 @@ import {
   HealthStatus,
   Participant,
   WinnerResult,
+  ParticipantEditRequest,
 } from '../types.ts';
 
 const TOKEN_KEY = 'raffle_ctrl_token';
@@ -369,6 +370,74 @@ export const api = {
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.message || `Failed to batch ${action} registrations`);
+    }
+    return data;
+  },
+
+  // Participant Name Edit Requests
+  async getParticipantEditConfig(): Promise<{ allow_participant_edit: boolean; allowed_edit_series: string[] }> {
+    try {
+      const res = await fetch('/api/public/participants/edit-config');
+      if (res.ok) return await res.json();
+      return { allow_participant_edit: true, allowed_edit_series: ['20', '21', '22', '23', '24'] };
+    } catch {
+      return { allow_participant_edit: true, allowed_edit_series: ['20', '21', '22', '23', '24'] };
+    }
+  },
+
+  async requestParticipantEdit(data: {
+    student_id: string;
+    current_name?: string;
+    requested_name: string;
+    reason?: string;
+  }): Promise<{ success: boolean; message: string; id?: string }> {
+    const res = await fetch('/api/public/participants/edit-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    if (!res.ok || !result.success) {
+      throw new Error(result.message || 'Name edit request failed.');
+    }
+    return result;
+  },
+
+  async getParticipantEditRequests(): Promise<{ requests: ParticipantEditRequest[] }> {
+    const res = await fetch('/api/controller/edit-requests', { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch name edit requests');
+    return res.json();
+  },
+
+  async reviewParticipantEditRequest(
+    id: string,
+    action: 'approve' | 'reject',
+    notes?: string
+  ): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`/api/controller/edit-requests/${id}/review`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action, notes }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || `Failed to ${action} name edit request`);
+    }
+    return data;
+  },
+
+  async batchReviewParticipantEditRequests(
+    action: 'approve' | 'reject',
+    requestIds?: string[]
+  ): Promise<{ success: boolean; count: number; message: string }> {
+    const res = await fetch('/api/controller/edit-requests/batch-review', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action, request_ids: requestIds }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || `Failed to batch ${action} name edit requests`);
     }
     return data;
   },
